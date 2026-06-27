@@ -5,36 +5,58 @@ export default function LiveLeaderboard({ onExit }) {
   const [connectionStatus, setConnectionStatus] = useState('Connecting...');
 
   useEffect(() => {
-    // Connect directly to your FastAPI WebSocket endpoint
-    const ws = new WebSocket('ws://127.0.0.1:8000/api/v1/leaderboard/ws');
+    let ws;
+    let shouldClose = false;
 
-    ws.onopen = () => {
-      setConnectionStatus('Live');
-    };
+    const connectTimer = window.setTimeout(() => {
+      if (shouldClose) return;
 
-    ws.onmessage = (event) => {
-      const payload = JSON.parse(event.data);
+      ws = new WebSocket('ws://127.0.0.1:8000/api/v1/leaderboard/ws');
 
-      // Look for data.data instead of data.leaderboard
-      if (payload.type === 'initial_load' || payload.type === 'live_update') {
-        // Sort based on 'score' instead of 'total_score'
-        const sortedTeams = payload.data.sort((a, b) => b.score - a.score);
-        setLeaderboard(sortedTeams);
-      }
-    };
+      ws.onopen = () => {
+        setConnectionStatus('Live');
+      };
 
-    ws.onerror = (error) => {
-      console.error('WebSocket Error:', error);
-      setConnectionStatus('Error');
-    };
+      ws.onmessage = (event) => {
+        const payload = JSON.parse(event.data);
 
-    ws.onclose = () => {
-      setConnectionStatus('Disconnected');
-    };
+        // Look for data.data instead of data.leaderboard
+        if (payload.type === 'initial_load' || payload.type === 'live_update') {
+          // Sort based on 'score' instead of 'total_score'
+          const sortedTeams = payload.data.sort((a, b) => b.score - a.score);
+          setLeaderboard(sortedTeams);
+        }
+      };
 
-    // Clean up the TCP connection when the component unmounts
+      ws.onerror = (error) => {
+        if (!shouldClose) {
+          console.error('WebSocket Error:', error);
+          setConnectionStatus('Error');
+        }
+      };
+
+      ws.onclose = () => {
+        if (!shouldClose) {
+          setConnectionStatus('Disconnected');
+        }
+      };
+    }, 0);
+
     return () => {
-      ws.close();
+      shouldClose = true;
+      window.clearTimeout(connectTimer);
+
+      if (!ws) return;
+
+      ws.onmessage = null;
+      ws.onerror = null;
+      ws.onclose = null;
+
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.close();
+      } else if (ws.readyState === WebSocket.CONNECTING) {
+        ws.onopen = () => ws.close();
+      }
     };
   }, []);
 

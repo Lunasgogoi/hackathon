@@ -11,6 +11,106 @@ ASSESSMENT_TITLE = "Round 1: Online Assessment"
 SEEDED_CODING_PROBLEM_IDS = [1, 3]
 SEEDED_MCQ_QUESTION_IDS = [2]
 
+COUNTING_TRIPLETS_STARTERS = {
+    "Python 3": """import sys
+
+
+def solve(arr, d):
+    count = 0
+    # Write your solution here
+    return count
+
+
+if __name__ == "__main__":
+    data = sys.stdin.read().strip().split()
+    n = int(data[0])
+    arr = list(map(int, data[1:1 + n]))
+    d = int(data[1 + n])
+    print(solve(arr, d))""",
+    "JavaScript": """const fs = require('fs');
+const data = fs.readFileSync(0, 'utf8').trim().split(/\\s+/).map(Number);
+
+const n = data[0];
+const arr = data.slice(1, 1 + n);
+const d = data[1 + n];
+
+function solve(arr, d) {
+  let count = 0;
+  // Write your solution here
+  return count;
+}
+
+console.log(solve(arr, d));""",
+    "C++": """#include <bits/stdc++.h>
+using namespace std;
+
+long long solve(vector<int>& arr, int d) {
+    long long count = 0;
+    // Write your solution here
+    return count;
+}
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    int n;
+    cin >> n;
+
+    vector<int> arr(n);
+    for (int i = 0; i < n; i++) {
+        cin >> arr[i];
+    }
+
+    int d;
+    cin >> d;
+
+    cout << solve(arr, d) << '\\n';
+    return 0;
+}""",
+}
+
+VALID_PALINDROME_STARTERS = {
+    "Python 3": """import sys
+
+
+def solve(s):
+    # Write your solution here
+    return "false"
+
+
+if __name__ == "__main__":
+    s = sys.stdin.read().strip()
+    print(solve(s))""",
+    "JavaScript": """const fs = require('fs');
+const s = fs.readFileSync(0, 'utf8').trim();
+
+function solve(s) {
+  // Write your solution here
+  return 'false';
+}
+
+console.log(solve(s));""",
+    "C++": """#include <bits/stdc++.h>
+using namespace std;
+
+string solve(string s) {
+    // Write your solution here
+    return "false";
+}
+
+int main() {
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    string s;
+    getline(cin, s);
+
+    cout << solve(s) << '\\n';
+    return 0;
+}""",
+}
+
 async def seed_database():
     print("Starting database seed process for the decoupled architecture...")
     async with SessionLocal() as db:
@@ -44,6 +144,7 @@ async def seed_database():
             assessment_id=assessment.id,
             title="Counting Triplets",
             description="Given an integer array arr[n] and an integer d, count the number of distinct triplets (i, j, k) where:\n- 0 <= i < j < k < n\n- The sum arr[i] + arr[j] + arr[k] is divisible by d",
+            starter_code=json.dumps(COUNTING_TRIPLETS_STARTERS),
             time_limit_seconds=2.0,
             memory_limit_mb=128
         )
@@ -86,6 +187,7 @@ async def seed_database():
             assessment_id=assessment.id,
             title="Valid Palindrome",
             description="Determine if a given string is a valid palindrome, ignoring non-alphanumeric characters.",
+            starter_code=json.dumps(VALID_PALINDROME_STARTERS),
             time_limit_seconds=2.0,
             memory_limit_mb=128
         )

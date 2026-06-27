@@ -13,6 +13,7 @@ from app.models.user import User, RoleEnum
 from app.models.coding import CodingSubmission, CodingProblem, TestCase, SubmissionStatus
 from app.schemas.coding import CodeSubmitRequest
 from app.api.deps import get_db, get_current_user
+from app.api.assessment import ensure_assessment_attempt_is_editable
 
 router = APIRouter(prefix="/coding", tags=["Coding Round"])
 
@@ -25,6 +26,23 @@ LANGUAGE_MAP = {
     54: {"language": "c++", "version": "10.2.0", "local": "cpp"},
     63: {"language": "javascript", "version": "18.15.0", "local": "javascript"}
 }
+
+
+def output_matches(actual_output: str, expected_output: str) -> bool:
+    if actual_output == expected_output:
+        return True
+
+    expected_normalized = expected_output.strip().lower()
+    actual_normalized = actual_output.strip().lower()
+
+    if expected_normalized in {"true", "false"}:
+        boolean_aliases = {
+            "true": {"true", "1"},
+            "false": {"false", "0"},
+        }
+        return actual_normalized in boolean_aliases[expected_normalized]
+
+    return False
 
 
 async def _run_process(command: list[str], stdin: str, timeout_seconds: float) -> dict:
@@ -113,13 +131,17 @@ async def submit_code(
     if current_user.role != RoleEnum.participant:
         raise HTTPException(status_code=403, detail="Only participants can submit code.")
 
-    # 1. Verify problem & fetch test case
+    # 1. Verify problem & fetch test cases
     problem = (await db.execute(select(CodingProblem).where(CodingProblem.id == request.problem_id))).scalar_one_or_none()
     if not problem:
         raise HTTPException(status_code=404, detail="Problem not found")
 
-    test_case = (await db.execute(select(TestCase).where(TestCase.problem_id == problem.id).limit(1))).scalar_one_or_none()
-    if not test_case:
+    await ensure_assessment_attempt_is_editable(db, current_user.id, problem.assessment_id)
+
+    test_cases = (await db.execute(
+        select(TestCase).where(TestCase.problem_id == problem.id).order_by(TestCase.id)
+    )).scalars().all()
+    if not test_cases:
         raise HTTPException(status_code=500, detail="No test cases configured.")
 
     # 2. Get Piston language config
@@ -139,74 +161,105 @@ async def submit_code(
     await db.commit()
     await db.refresh(submission)
 
-    # 4. Construct Piston Payload
-    payload = {
-        "language": lang_config["language"],
-        "version": lang_config["version"],
-        "files": [{"content": request.source_code}],
-        "stdin": test_case.stdin,
-        "compile_timeout": 10000,
-        "run_timeout": int(problem.time_limit_seconds * 1000),
-    }
-
-    # 5. Execute via Piston first, then fall back to local execution for dev/demo use.
+    # 4. Execute every configured test case.
+    case_results = []
     async with httpx.AsyncClient() as client:
-        try:
-            response = await client.post(PISTON_URL, json=payload, timeout=15.0)
-            response.raise_for_status()
-            result = response.json()
-        except httpx.HTTPError:
+        for test_case in test_cases:
+            payload = {
+                "language": lang_config["language"],
+                "version": lang_config["version"],
+                "files": [{"content": request.source_code}],
+                "stdin": test_case.stdin,
+                "compile_timeout": 10000,
+                "run_timeout": int(problem.time_limit_seconds * 1000),
+            }
+
             try:
-                result = await run_code_locally(
-                    lang_config,
-                    request.source_code,
-                    test_case.stdin,
-                    problem.time_limit_seconds,
+                response = await client.post(PISTON_URL, json=payload, timeout=15.0)
+                response.raise_for_status()
+                result = response.json()
+            except httpx.HTTPError:
+                try:
+                    result = await run_code_locally(
+                        lang_config,
+                        request.source_code,
+                        test_case.stdin,
+                        problem.time_limit_seconds,
+                    )
+                except Exception as exc:
+                    result = {
+                        "compile": {
+                            "code": 1,
+                            "output": f"Local execution failed: {exc}",
+                        },
+                        "run": {},
+                    }
+
+            compile_result = result.get("compile", {})
+            run_result = result.get("run", {})
+            expected_output = test_case.expected_stdout.strip()
+
+            if compile_result.get("code") != 0 and compile_result.get("code") is not None:
+                case_status = SubmissionStatus.error
+                actual_output = compile_result.get("output", "Compilation Error")
+            elif run_result.get("code") == 124:
+                case_status = SubmissionStatus.time_limit
+                actual_output = run_result.get("output", "Time limit exceeded")
+            elif run_result.get("code") != 0:
+                case_status = SubmissionStatus.error
+                actual_output = run_result.get("output", "Runtime Error")
+            else:
+                actual_output = run_result.get("stdout", "").strip()
+                case_status = (
+                    SubmissionStatus.accepted
+                    if output_matches(actual_output, expected_output)
+                    else SubmissionStatus.wrong_answer
                 )
-            except Exception as exc:
-                result = {
-                    "compile": {
-                        "code": 1,
-                        "output": f"Local execution failed: {exc}",
-                    },
-                    "run": {},
-                }
 
-    # 6. Evaluate the Piston Result
-    compile_result = result.get("compile", {})
-    run_result = result.get("run", {})
+            case_results.append({
+                "id": test_case.id,
+                "hidden": test_case.is_hidden,
+                "passed": case_status == SubmissionStatus.accepted,
+                "status": case_status,
+                "input": test_case.stdin,
+                "expected": test_case.expected_stdout,
+                "output": actual_output,
+            })
 
-    if compile_result.get("code") != 0 and compile_result.get("code") is not None:
-        submission.status = SubmissionStatus.error
-        actual_output = compile_result.get("output", "Compilation Error")
-    elif run_result.get("code") == 124:
-        submission.status = SubmissionStatus.time_limit
-        actual_output = run_result.get("output", "Time limit exceeded")
-    elif run_result.get("code") != 0:
-        submission.status = SubmissionStatus.error
-        actual_output = run_result.get("output", "Runtime Error")
+            if case_status in {SubmissionStatus.error, SubmissionStatus.time_limit}:
+                break
+
+    failed_result = next((case for case in case_results if not case["passed"]), None)
+    if failed_result:
+        submission.status = failed_result["status"]
     else:
-        # Compare actual output with expected (strip trailing newlines/spaces)
-        actual_output = run_result.get("stdout", "").strip()
-        expected_output = test_case.expected_stdout.strip()
-        
-        if actual_output == expected_output:
-            submission.status = SubmissionStatus.accepted
-        else:
-            submission.status = SubmissionStatus.wrong_answer
+        submission.status = SubmissionStatus.accepted
 
     # 7. Update Database and Return immediately to the frontend
     await db.commit()
 
+    visible_results = []
+    for index, result in enumerate(case_results, start=1):
+        if result["hidden"]:
+            visible_results.append({
+                "id": index,
+                "passed": result["passed"],
+                "input": "Hidden test",
+                "expected": "-",
+                "output": "Passed" if result["passed"] else result["status"].value,
+            })
+        else:
+            visible_results.append({
+                "id": index,
+                "passed": result["passed"],
+                "input": result["input"],
+                "expected": result["expected"],
+                "output": result["output"],
+            })
+
     return {
         "status": submission.status.value,
-        "passed_cases": 1 if submission.status == SubmissionStatus.accepted else 0,
-        "total_cases": 1,
-        "details": [{
-            "id": test_case.id,
-            "passed": submission.status == SubmissionStatus.accepted,
-            "input": test_case.stdin,
-            "expected": test_case.expected_stdout,
-            "output": actual_output
-        }]
+        "passed_cases": sum(1 for result in case_results if result["passed"]),
+        "total_cases": len(test_cases),
+        "details": visible_results,
     }

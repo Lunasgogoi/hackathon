@@ -1,5 +1,7 @@
 # app/models/team.py
-from sqlalchemy import String , Boolean
+from typing import Optional
+
+from sqlalchemy import String , Boolean, ForeignKey, Integer
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
 
@@ -8,6 +10,10 @@ class Team(Base):
     is_promoted_to_r2: Mapped[bool] = mapped_column(Boolean, default=False)
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     name: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+    description: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    invite_code: Mapped[Optional[str]] = mapped_column(String(24), unique=True, index=True, nullable=True)
+    max_members: Mapped[int] = mapped_column(Integer, default=4)
+    captain_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     repo_link: Mapped[str] = mapped_column(String(255), nullable=True)
     
     # One-to-Many relationship: One team has many users

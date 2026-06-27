@@ -7,6 +7,7 @@ from app.models.mcq import MCQQuestion, MCQSubmission # Updated import
 from app.models.user import User, RoleEnum
 from app.schemas.coding import MCQSubmitRequest
 from app.api.deps import get_current_user
+from app.api.assessment import ensure_assessment_attempt_is_editable
 
 router = APIRouter(prefix="/mcq", tags=["MCQ Round"])
 
@@ -26,6 +27,8 @@ async def submit_mcq(
     if not question:
         raise HTTPException(status_code=404, detail="Question not found")
 
+    await ensure_assessment_attempt_is_editable(db, current_user.id, question.assessment_id)
+
     # 2. Check if user already submitted an answer for this question
     existing_sub = await db.execute(
         select(MCQSubmission).where(
@@ -33,24 +36,27 @@ async def submit_mcq(
             MCQSubmission.question_id == question.id
         )
     )
-    if existing_sub.scalar_one_or_none():
-        raise HTTPException(status_code=400, detail="You have already answered this question.")
+    existing_submission = existing_sub.scalar_one_or_none()
 
     # 3. Validate and Save
     is_correct = request.selected_option.upper() == question.correct_option.upper()
 
-    submission = MCQSubmission(
-        user_id=current_user.id,
-        question_id=question.id,
-        selected_option=request.selected_option.upper(),
-        is_correct=is_correct
-    )
-    
-    db.add(submission)
+    if existing_submission:
+        existing_submission.selected_option = request.selected_option.upper()
+        existing_submission.is_correct = is_correct
+    else:
+        submission = MCQSubmission(
+            user_id=current_user.id,
+            question_id=question.id,
+            selected_option=request.selected_option.upper(),
+            is_correct=is_correct
+        )
+        db.add(submission)
+
     await db.commit()
-    
+
     return {
         "question_id": request.question_id,
-        "is_correct": is_correct,
-        "correct_answer": question.correct_option if not is_correct else None
+        "selected_option": request.selected_option.upper(),
+        "message": "Answer saved."
     }

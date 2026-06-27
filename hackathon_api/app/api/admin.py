@@ -8,11 +8,8 @@ from app.core.websocket import manager
 from app.db.session import get_db
 from app.api.deps import get_current_admin
 
-from sqlalchemy import func
 from app.models.team import Team
-from app.models.user import User
-from app.models.coding import CodingSubmission, SubmissionStatus
-from app.models.mcq import MCQSubmission
+from app.api.assessment import calculate_team_average, get_round1_assessment
 from pydantic import BaseModel, Field
 
 
@@ -73,7 +70,7 @@ async def broadcast_message(
     return {"message": "Broadcast sent successfully."}
 
 class AutoPromoteRequest(BaseModel):
-    cutoff_score: int = Field(50, description="Minimum score required to advance to Round 2")
+    cutoff_score: int = Field(50, description="Minimum team average percentage required to advance to Round 2")
 
 @router.post("/auto-promote")
 async def auto_promote_teams(
@@ -82,54 +79,30 @@ async def auto_promote_teams(
     current_user=Depends(get_current_admin)
 ):
     """
-    Evaluates all teams based on Round 1 performance.
-    Coding = 50 pts, MCQ = 10 pts.
+    Evaluates every team by averaging the Round 1 percentages of its participants.
     """
-    # 1. Fetch all teams and their members
+    assessment = await get_round1_assessment(db)
     result = await db.execute(select(Team))
     teams = result.scalars().all()
 
     promoted_count = 0
+    evaluated = []
 
     for team in teams:
-        team_score = 0
-        
-        # 2. Fetch all members of this team
-        members_result = await db.execute(select(User).where(User.team_id == team.id))
-        members = members_result.scalars().all()
-        member_ids = [m.id for m in members]
+        team_summary = await calculate_team_average(db, team.id, assessment.id)
+        is_promoted = team_summary["team_average"] >= payload.cutoff_score
 
-        if not member_ids:
-            continue
-
-        # 3. Calculate Coding Score (e.g., 50 points per Accepted submission)
-        coding_result = await db.execute(
-            select(func.count(CodingSubmission.id))
-            .where(
-                CodingSubmission.user_id.in_(member_ids),
-                CodingSubmission.status == SubmissionStatus.accepted
-            )
-        )
-        accepted_codes = coding_result.scalar() or 0
-        team_score += (accepted_codes * 50)
-
-        # 4. Calculate MCQ Score (e.g., 10 points per Correct MCQ)
-        mcq_result = await db.execute(
-            select(func.count(MCQSubmission.id))
-            .where(
-                MCQSubmission.user_id.in_(member_ids),
-                MCQSubmission.is_correct == True
-            )
-        )
-        correct_mcqs = mcq_result.scalar() or 0
-        team_score += (correct_mcqs * 10)
-
-        # 5. Evaluate against the cutoff
-        if team_score >= payload.cutoff_score:
-            team.is_promoted_to_r2 = True
+        team.is_promoted_to_r2 = is_promoted
+        if is_promoted:
             promoted_count += 1
-        else:
-            team.is_promoted_to_r2 = False
+
+        evaluated.append({
+            "team_id": team.id,
+            "team_name": team.name,
+            "team_average_percent": team_summary["team_average"],
+            "member_count": team_summary["member_count"],
+            "promoted": is_promoted,
+        })
 
     # Save all promotions to the database
     await db.commit()
@@ -143,5 +116,7 @@ async def auto_promote_teams(
     return {
         "message": "Auto-promotion complete.",
         "teams_evaluated": len(teams),
-        "teams_promoted": promoted_count
+        "teams_promoted": promoted_count,
+        "cutoff_percent": payload.cutoff_score,
+        "results": evaluated,
     }

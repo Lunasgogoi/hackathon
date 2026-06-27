@@ -21,6 +21,7 @@ class CodingProblem(Base):
     
     title: Mapped[str] = mapped_column(String(100), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
+    starter_code: Mapped[str | None] = mapped_column(Text, nullable=True)
     time_limit_seconds: Mapped[float] = mapped_column(Float, default=2.0)
     memory_limit_mb: Mapped[int] = mapped_column(Integer, default=128)
 

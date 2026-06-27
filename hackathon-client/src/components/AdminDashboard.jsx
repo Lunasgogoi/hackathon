@@ -1,18 +1,32 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { apiClient } from '../api/client';
 
 export default function AdminDashboard() {
-    // Mocking the global system state
     const [systemStatus, setSystemStatus] = useState({
-        registration: 'completed',
-        round1: 'active',
+        registration: 'active',
+        round1: 'locked',
         round2: 'locked',
         finale: 'locked'
     });
 
     const [announcement, setAnnouncement] = useState('');
 
+    useEffect(() => {
+        const fetchPhases = async () => {
+            try {
+                const response = await apiClient.get('/system/phases');
+                setSystemStatus(response.data);
+            } catch (error) {
+                console.error('Failed to load phase state.', error);
+            }
+        };
+
+        fetchPhases();
+    }, []);
+
     const handlePhaseChange = async (phase, newStatus) => {
+        const previousStatus = systemStatus[phase];
+
         // Optimistic UI update
         setSystemStatus(prev => ({ ...prev, [phase]: newStatus }));
 
@@ -23,8 +37,10 @@ export default function AdminDashboard() {
                 status: newStatus
             });
         } catch (error) {
+            console.error('Failed to update phase on the server.', error);
             alert("Failed to update phase on the server.");
             // Revert the UI if the server fails
+            setSystemStatus(prev => ({ ...prev, [phase]: previousStatus }));
         }
     };
 
@@ -40,6 +56,7 @@ export default function AdminDashboard() {
             alert(`Broadcast sent to all screens: "${announcement}"`);
             setAnnouncement('');
         } catch (error) {
+            console.error('Failed to send broadcast.', error);
             alert("Failed to send broadcast.");
         }
     };
@@ -92,15 +109,15 @@ export default function AdminDashboard() {
                                     <button
                                         onClick={() => handlePhaseChange(phase.id, 'locked')}
                                         className={`px-3 py-1.5 text-sm font-medium rounded transition ${systemStatus[phase.id] === 'locked' ? 'bg-gray-800 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
-                                    >Lock</button>
+                                    >Not Open</button>
                                     <button
                                         onClick={() => handlePhaseChange(phase.id, 'active')}
                                         className={`px-3 py-1.5 text-sm font-medium rounded transition ${systemStatus[phase.id] === 'active' ? 'bg-blue-600 text-white' : 'bg-blue-50 text-blue-600 hover:bg-blue-100'}`}
-                                    >Set Active</button>
+                                    >Open Now</button>
                                     <button
                                         onClick={() => handlePhaseChange(phase.id, 'completed')}
                                         className={`px-3 py-1.5 text-sm font-medium rounded transition ${systemStatus[phase.id] === 'completed' ? 'bg-green-600 text-white' : 'bg-green-50 text-green-600 hover:bg-green-100'}`}
-                                    >Complete</button>
+                                    >Closed</button>
                                 </div>
                             </div>
                         ))}

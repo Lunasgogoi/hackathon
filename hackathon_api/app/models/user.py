@@ -19,6 +19,8 @@ class User(Base):
     username: Mapped[str] = mapped_column(String(50), unique=True, index=True)
     email: Mapped[str] = mapped_column(String(100), unique=True)
     hashed_password: Mapped[str] = mapped_column(String(255))
+    avatar_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    skills: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     
     # Assign the enum to the column, defaulting to participant
     role: Mapped[RoleEnum] = mapped_column(default=RoleEnum.participant)
@@ -36,3 +38,5 @@ class User(Base):
     evaluations_given = relationship("RubricEvaluation", back_populates="judge")
     
     mcq_submissions = relationship("MCQSubmission", back_populates="user")
+
+    assessment_attempts = relationship("AssessmentAttempt", back_populates="user")

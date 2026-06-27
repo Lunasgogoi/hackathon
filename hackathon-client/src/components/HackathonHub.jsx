@@ -1,163 +1,587 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import axios from 'axios';
+import { apiClient } from '../api/client';
 
-export default function HackathonHub({ stages, onLaunchOA, onLaunchProject }) {
-  // Mock data for the sidebar
-  const teamData = {
-    name: "Test Hackers",
-    registered: 70262,
-    members: ["Lunas Gogoi", "p1@gmail.com"]
+const PHASE_LABELS = {
+  locked: 'Not Open Yet',
+  active: 'Live Now',
+  completed: 'Closed'
+};
+
+const DEFAULT_PROGRESS = {
+  registration: true,
+  round1: false,
+  round2: false
+};
+
+const getPhaseClasses = (status, activeColor = 'blue') => {
+  if (status === 'completed') {
+    return {
+      circle: 'bg-green-500 border-green-100',
+      icon: 'text-white',
+      card: 'border-green-400',
+      stripe: 'bg-green-500',
+      badge: 'bg-green-100 text-green-700'
+    };
+  }
+
+  if (status === 'active') {
+    const isPurple = activeColor === 'purple';
+
+    return {
+      circle: isPurple
+        ? 'bg-purple-600 border-purple-200 shadow-[0_0_15px_rgba(147,51,234,0.4)]'
+        : 'bg-blue-500 border-blue-100',
+      icon: 'text-white',
+      card: isPurple ? 'border-purple-400' : 'border-blue-400',
+      stripe: isPurple ? 'bg-purple-500' : 'bg-blue-500',
+      badge: isPurple ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'
+    };
+  }
+
+  return {
+    circle: 'bg-gray-100 border-gray-200',
+    icon: 'text-gray-400',
+    card: 'border-gray-200',
+    stripe: '',
+    badge: 'bg-gray-100 text-gray-500'
+  };
+};
+
+const getParticipantStatuses = (stages, progress, round2Eligible) => {
+  const currentProgress = { ...DEFAULT_PROGRESS, ...progress };
+
+  return {
+    registration: currentProgress.registration ? 'completed' : stages.registration || 'locked',
+    round1: currentProgress.registration
+      ? currentProgress.round1 ? 'completed' : stages.round1 || 'locked'
+      : 'locked',
+    round2: currentProgress.round1 && round2Eligible
+      ? currentProgress.round2 ? 'completed' : stages.round2 || 'locked'
+      : 'locked',
+    finale: currentProgress.round2 && round2Eligible ? stages.finale || 'locked' : 'locked'
+  };
+};
+
+const formatApiError = (error, fallback = 'Something went wrong.') => {
+  const detail = error.response?.data?.detail;
+  if (typeof detail === 'string') return detail;
+  if (Array.isArray(detail)) return detail.map(item => item.msg).join(', ');
+  return fallback;
+};
+
+const getInitials = (name = '') => {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return 'U';
+  return parts.slice(0, 2).map(part => part[0]?.toUpperCase()).join('');
+};
+
+function MemberAvatar({ member, size = 'md' }) {
+  const sizeClasses = size === 'lg' ? 'h-16 w-16 text-xl' : 'h-11 w-11 text-sm';
+
+  if (member?.avatar_url) {
+    return (
+      <img
+        src={member.avatar_url}
+        alt={member.username}
+        className={`${sizeClasses} shrink-0 rounded-full object-cover ring-2 ring-white`}
+      />
+    );
+  }
+
+  return (
+    <div className={`${sizeClasses} shrink-0 rounded-full bg-gradient-to-tr from-blue-600 to-emerald-500 flex items-center justify-center font-black text-white ring-2 ring-white`}>
+      {getInitials(member?.username)}
+    </div>
+  );
+}
+
+function TeamPanel({ teamPayload, setTeamPayload }) {
+  const [mode, setMode] = useState('create');
+  const [teamForm, setTeamForm] = useState({ name: '', description: '', maxMembers: 4 });
+  const [joinCode, setJoinCode] = useState('');
+  const [profileForm, setProfileForm] = useState({
+    avatarUrl: teamPayload?.current_user?.avatar_url || '',
+    skills: teamPayload?.current_user?.skills || ''
+  });
+  const [isSaving, setIsSaving] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+
+  const currentUser = teamPayload?.current_user;
+  const team = teamPayload?.team;
+
+  const loadTeam = async () => {
+    const response = await apiClient.get('/teams/me');
+    setTeamPayload(response.data);
+    return response.data;
+  };
+
+  const handleCreateTeam = async (event) => {
+    event.preventDefault();
+    setIsSaving(true);
+    setError('');
+    setMessage('');
+
+    try {
+      const response = await apiClient.post('/teams/create', {
+        name: teamForm.name,
+        description: teamForm.description || null,
+        max_members: Number(teamForm.maxMembers)
+      });
+      await loadTeam();
+      setMessage(response.data.message || 'Team created.');
+    } catch (err) {
+      setError(formatApiError(err, 'Could not create team.'));
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleJoinTeam = async (event) => {
+    event.preventDefault();
+    setIsSaving(true);
+    setError('');
+    setMessage('');
+
+    try {
+      const response = await apiClient.post('/teams/join', {
+        invite_code: joinCode.trim().toUpperCase()
+      });
+      await loadTeam();
+      setMessage(response.data.message || 'Joined team.');
+    } catch (err) {
+      setError(formatApiError(err, 'Could not join team.'));
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const saveProfile = async (nextProfile = profileForm) => {
+    const response = await apiClient.patch('/teams/profile', {
+      avatar_url: nextProfile.avatarUrl || null,
+      skills: nextProfile.skills || null
+    });
+    setTeamPayload({
+      current_user: response.data.current_user,
+      team: response.data.team
+    });
+    return response.data;
+  };
+
+  const handleProfileSubmit = async (event) => {
+    event.preventDefault();
+    setIsSaving(true);
+    setError('');
+    setMessage('');
+
+    try {
+      const response = await saveProfile();
+      setMessage(response.message || 'Profile updated.');
+    } catch (err) {
+      setError(formatApiError(err, 'Could not update profile.'));
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handlePhotoUpload = async (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const cloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
+    const uploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET;
+
+    setError('');
+    setMessage('');
+
+    if (!cloudName || !uploadPreset) {
+      setError('Cloudinary is not configured. Check VITE_CLOUDINARY_CLOUD_NAME and VITE_CLOUDINARY_UPLOAD_PRESET.');
+      event.target.value = '';
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      setError('Photo is too large. Upload an image under 5MB.');
+      event.target.value = '';
+      return;
+    }
+
+    setIsUploading(true);
+
+    const data = new FormData();
+    data.append('file', file);
+    data.append('upload_preset', uploadPreset);
+
+    try {
+      const response = await axios.post(
+        `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`,
+        data,
+        {
+          onUploadProgress: (progressEvent) => {
+            const total = progressEvent.total || 1;
+            setUploadProgress(Math.round((progressEvent.loaded * 100) / total));
+          }
+        }
+      );
+
+      const nextProfile = {
+        ...profileForm,
+        avatarUrl: response.data.secure_url
+      };
+      setProfileForm(nextProfile);
+      await saveProfile(nextProfile);
+      setMessage('Photo updated.');
+    } catch (err) {
+      setError(err.response?.data?.error?.message || 'Failed to upload photo.');
+    } finally {
+      setIsUploading(false);
+      setUploadProgress(0);
+      event.target.value = '';
+    }
   };
 
   return (
-    <div className="max-w-6xl mx-auto mt-8 grid grid-cols-1 lg:grid-cols-3 gap-8 pb-12">
-      
-      {/* LEFT COLUMN: The Timeline */}
-      <div className="lg:col-span-2 space-y-0 relative">
-        {/* The continuous vertical background line */}
-        <div className="absolute left-[27px] top-8 bottom-8 w-0.5 bg-gray-200 border-l border-dashed border-gray-400 z-0 hidden sm:block"></div>
-
-        {/* STAGE 1: Eligibility & Registration */}
-        <div className="relative flex items-start p-4 sm:p-0 sm:mb-8">
-          <div className="hidden sm:flex z-10 w-14 h-14 bg-green-500 border-green-100 rounded-full border items-center justify-center shadow-sm mt-4 mr-6">
-            <span className="text-white font-bold text-lg">✓</span>
-          </div>
-          <div className="flex-1 bg-white p-6 rounded-xl border border-green-400 shadow-sm relative overflow-hidden">
-            <div className="absolute top-0 left-0 w-1 h-full bg-green-500"></div>
-            <div className="flex justify-between items-start mb-2">
-              <h3 className="text-lg font-bold text-gray-900">Eligibility & Registration</h3>
-              {/* Standardized Badge */}
-              <span className="px-3 py-1 bg-green-100 text-green-700 text-xs font-semibold rounded-full">Completed</span>
-            </div>
-            <p className="text-gray-600 text-sm mb-4">You have successfully formed a team of 2-3 members and met all eligibility criteria.</p>
-            <div className="flex space-x-3">
-              <button className="bg-green-50 text-green-700 border border-green-200 px-6 py-2 rounded-lg text-sm font-medium cursor-default">
-                ✅ Registration Confirmed
-              </button>
-            </div>
+    <aside className="space-y-6">
+      <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
+        <div className="flex items-start gap-4">
+          <MemberAvatar member={currentUser} size="lg" />
+          <div className="min-w-0 flex-1">
+            <div className="text-xs font-bold uppercase text-gray-400">Participant</div>
+            <h2 className="truncate text-xl font-black text-gray-900">{currentUser?.username || 'Profile'}</h2>
+            <p className="truncate text-sm text-gray-500">{currentUser?.email}</p>
           </div>
         </div>
 
-        {/* STAGE 2: Round 1 (Coding Challenge) */}
-        <div className="relative flex items-start p-4 sm:p-0 sm:mb-8">
-          <div className={`hidden sm:flex z-10 w-14 h-14 rounded-full border items-center justify-center shadow-sm mt-4 mr-6
-            ${stages.round1 === 'completed' ? 'bg-green-500 border-green-100' : stages.round1 === 'active' ? 'bg-blue-500 border-blue-100' : 'bg-gray-100 border-gray-200'}`}>
-            <span className={`${(stages.round1 === 'active' || stages.round1 === 'completed') ? 'text-white' : 'text-gray-400'} font-bold text-lg`}>
-              {stages.round1 === 'completed' ? '✓' : '1'}
-            </span>
-          </div>
-          <div className={`flex-1 bg-white p-6 rounded-xl border shadow-md relative overflow-hidden
-            ${stages.round1 === 'completed' ? 'border-green-400' : stages.round1 === 'active' ? 'border-blue-400' : 'border-gray-200 opacity-75'}`}>
-            
-            {stages.round1 === 'active' && <div className="absolute top-0 left-0 w-1 h-full bg-blue-500"></div>}
-            {stages.round1 === 'completed' && <div className="absolute top-0 left-0 w-1 h-full bg-green-500"></div>}
-
-            <div className="flex justify-between items-start mb-2">
-              <div>
-                <h3 className="text-lg font-bold text-gray-900">100-Minute Coding Challenge</h3>
-                <p className={`text-xs font-semibold mt-1 ${stages.round1 === 'completed' ? 'text-green-600' : 'text-blue-600'}`}>13 Jun 26, 12:00 AM IST → 15 Jun 26, 11:59 PM IST</p>
-              </div>
-              {/* Standardized Badges */}
-              {stages.round1 === 'active' && <span className="px-3 py-1 bg-blue-100 text-blue-700 text-xs font-semibold rounded-full animate-pulse">Live Now</span>}
-              {stages.round1 === 'completed' && <span className="px-3 py-1 bg-green-100 text-green-700 text-xs font-semibold rounded-full">Completed</span>}
-              {stages.round1 === 'locked' && <span className="px-3 py-1 bg-gray-100 text-gray-500 text-xs font-semibold rounded-full">Locked</span>}
+        <form onSubmit={handleProfileSubmit} className="mt-5 space-y-4">
+          <label className="block">
+            <span className="mb-1 block text-sm font-bold text-gray-900">Photo</span>
+            <div className="relative flex h-11 items-center rounded-md border border-gray-300 bg-gray-50 px-3 text-sm font-semibold text-gray-600 hover:bg-gray-100">
+              <input
+                type="file"
+                accept="image/*"
+                onChange={handlePhotoUpload}
+                disabled={isUploading}
+                className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+              />
+              {isUploading ? `Uploading ${uploadProgress}%` : 'Choose image'}
             </div>
-            
-            <p className="text-gray-600 text-sm mb-6 mt-3">All eligible teams must participate in a proctored Online Assessment (OA) that includes coding questions and algorithmic MCQs. The HackerRank-style editor will lock your browser.</p>
-            
-            {/* Standardized Buttons */}
-            {stages.round1 === 'active' && (
-              <button 
-                onClick={onLaunchOA}
-                className="bg-blue-600 text-white px-6 py-2 rounded-lg font-medium hover:bg-blue-700 transition shadow-sm w-full sm:w-auto"
-              >
-                Launch Assessment 🚀
-              </button>
-            )}
-            {stages.round1 === 'completed' && (
-              <button disabled className="bg-green-50 text-green-700 border border-green-200 px-6 py-2 rounded-lg font-medium cursor-not-allowed w-full sm:w-auto">
-                ✅ Assessment Completed
-              </button>
-            )}
-            {stages.round1 === 'locked' && (
-               <button disabled className="bg-gray-100 text-gray-400 px-6 py-2 rounded-lg font-medium cursor-not-allowed w-full sm:w-auto">Locked</button>
-            )}
-          </div>
-        </div>
+          </label>
 
-        {/* STAGE 3: Round 2 (Project Submission) */}
-        <div className="relative flex items-start p-4 sm:p-0 sm:mb-8">
-          <div className={`hidden sm:flex z-10 w-14 h-14 rounded-full border items-center justify-center shadow-sm mt-4 mr-6 
-            ${stages.round2 === 'completed' ? 'bg-green-500 border-green-100' : stages.round2 === 'active' ? 'bg-blue-500 border-blue-100' : 'bg-gray-100 border-gray-200'}`}>
-            <span className={`${(stages.round2 === 'active' || stages.round2 === 'completed') ? 'text-white' : 'text-gray-400'} font-bold text-lg`}>
-              {stages.round2 === 'completed' ? '✓' : '2'}
-            </span>
-          </div>
-          
-          <div className={`flex-1 bg-white p-6 rounded-xl border shadow-sm relative overflow-hidden
-            ${stages.round2 === 'completed' ? 'border-green-400' : stages.round2 === 'active' ? 'border-blue-400' : 'border-gray-200 opacity-75'}`}>
-            
-            {stages.round2 === 'active' && <div className="absolute top-0 left-0 w-1 h-full bg-blue-500"></div>}
-            {stages.round2 === 'completed' && <div className="absolute top-0 left-0 w-1 h-full bg-green-500"></div>}
+          <label className="block">
+            <span className="mb-1 block text-sm font-bold text-gray-900">Skills</span>
+            <input
+              type="text"
+              value={profileForm.skills}
+              onChange={(event) => setProfileForm(prev => ({ ...prev, skills: event.target.value }))}
+              placeholder="React, FastAPI, ML"
+              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+            />
+          </label>
 
-            <div className="flex justify-between items-start mb-2">
-              <h3 className="text-lg font-bold text-gray-900">48-Hour Virtual Hackathon</h3>
-              {/* Standardized Badges */}
-              {stages.round2 === 'locked' && <span className="px-3 py-1 bg-gray-100 text-gray-500 text-xs font-semibold rounded-full">Locked</span>}
-              {stages.round2 === 'active' && <span className="px-3 py-1 bg-blue-100 text-blue-700 text-xs font-semibold rounded-full animate-pulse">Live Now</span>}
-              {stages.round2 === 'completed' && <span className="px-3 py-1 bg-green-100 text-green-700 text-xs font-semibold rounded-full">Completed</span>}
-            </div>
-            
-            <p className="text-gray-600 text-sm mb-4">Shortlisted teams will advance to an exclusive 48-hour build phase. You will submit your GitHub repository and video demo here.</p>
-            
-            {/* Standardized Buttons */}
-            {stages.round2 === 'active' && (
-              <button 
-                onClick={onLaunchProject}
-                className="bg-blue-600 text-white px-6 py-2 rounded-lg font-medium hover:bg-blue-700 transition shadow-sm w-full sm:w-auto"
-              >
-                Submit Project
-              </button>
-            )}
-            
-            {stages.round2 === 'completed' && (
-              <button disabled className="bg-green-50 text-green-700 border border-green-200 px-6 py-2 rounded-lg font-medium cursor-not-allowed w-full sm:w-auto">
-                ✅ Project Submitted Successfully
-              </button>
-            )}
-            
-            {stages.round2 === 'locked' && (
-               <button disabled className="bg-gray-100 text-gray-400 px-6 py-2 rounded-lg font-medium cursor-not-allowed w-full sm:w-auto">Locked</button>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* RIGHT COLUMN: Sidebar Stats (Like Unstop) */}
-      <div className="hidden lg:block space-y-6">
-        <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm text-center">
-          <div className="w-20 h-20 mx-auto bg-gradient-to-tr from-blue-500 to-purple-500 rounded-full flex items-center justify-center shadow-inner mb-4">
-            <span className="text-3xl text-white font-bold">{teamData.name.charAt(0)}</span>
-          </div>
-          <h2 className="text-xl font-bold text-gray-900">{teamData.name}</h2>
-          <p className="text-sm text-gray-500 mb-4">Team Captain: Lunas</p>
-          
-          <button className="w-full bg-green-600 text-white py-2 rounded-lg font-medium hover:bg-green-700 mb-4 flex justify-center items-center gap-2">
-            <span>✏️</span> View Details
+          <button
+            type="submit"
+            disabled={isSaving || isUploading}
+            className="w-full rounded-md bg-gray-900 px-4 py-2 text-sm font-bold text-white hover:bg-black disabled:cursor-wait disabled:bg-gray-400"
+          >
+            Save Profile
           </button>
-          
-          <div className="flex items-center justify-center text-sm text-gray-600 font-medium border-t pt-4">
-            <span>🚀 {teamData.registered.toLocaleString()} Registered globally</span>
+        </form>
+      </div>
+
+      {!team ? (
+        <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
+          <div className="mb-5 flex rounded-md border border-gray-200 bg-gray-50 p-1">
+            <button
+              type="button"
+              onClick={() => setMode('create')}
+              className={`flex-1 rounded px-3 py-2 text-sm font-bold ${mode === 'create' ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-500'}`}
+            >
+              Create
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode('join')}
+              className={`flex-1 rounded px-3 py-2 text-sm font-bold ${mode === 'join' ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-500'}`}
+            >
+              Join
+            </button>
+          </div>
+
+          {mode === 'create' ? (
+            <form onSubmit={handleCreateTeam} className="space-y-4">
+              <h3 className="text-lg font-black text-gray-900">Create Team</h3>
+              <input
+                type="text"
+                required
+                minLength={3}
+                maxLength={100}
+                value={teamForm.name}
+                onChange={(event) => setTeamForm(prev => ({ ...prev, name: event.target.value }))}
+                placeholder="Team name"
+                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+              />
+              <textarea
+                rows={3}
+                maxLength={255}
+                value={teamForm.description}
+                onChange={(event) => setTeamForm(prev => ({ ...prev, description: event.target.value }))}
+                placeholder="Short team description"
+                className="w-full resize-none rounded-md border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+              />
+              <label className="block">
+                <span className="mb-1 block text-sm font-bold text-gray-900">Max members</span>
+                <input
+                  type="number"
+                  min={2}
+                  max={6}
+                  value={teamForm.maxMembers}
+                  onChange={(event) => setTeamForm(prev => ({ ...prev, maxMembers: event.target.value }))}
+                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                />
+              </label>
+              <button
+                type="submit"
+                disabled={isSaving}
+                className="w-full rounded-md bg-blue-600 px-4 py-2 text-sm font-bold text-white hover:bg-blue-700 disabled:cursor-wait disabled:bg-blue-300"
+              >
+                Create Team
+              </button>
+            </form>
+          ) : (
+            <form onSubmit={handleJoinTeam} className="space-y-4">
+              <h3 className="text-lg font-black text-gray-900">Join Team</h3>
+              <input
+                type="text"
+                required
+                minLength={4}
+                maxLength={24}
+                value={joinCode}
+                onChange={(event) => setJoinCode(event.target.value.toUpperCase())}
+                placeholder="Invite code"
+                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm uppercase tracking-widest outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+              />
+              <button
+                type="submit"
+                disabled={isSaving}
+                className="w-full rounded-md bg-blue-600 px-4 py-2 text-sm font-bold text-white hover:bg-blue-700 disabled:cursor-wait disabled:bg-blue-300"
+              >
+                Join Team
+              </button>
+            </form>
+          )}
+        </div>
+      ) : (
+        <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="text-xs font-bold uppercase text-gray-400">Team</div>
+              <h2 className="text-xl font-black text-gray-900">{team.name}</h2>
+              {team.description && <p className="mt-1 text-sm text-gray-600">{team.description}</p>}
+            </div>
+            <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-black text-emerald-700">
+              {team.member_count}/{team.max_members}
+            </span>
+          </div>
+
+          <div className="mt-4 rounded-md border border-dashed border-blue-200 bg-blue-50 px-4 py-3">
+            <div className="text-xs font-bold uppercase text-blue-500">Invite Code</div>
+            <div className="mt-1 font-mono text-2xl font-black tracking-widest text-blue-900">{team.invite_code || 'PENDING'}</div>
+          </div>
+
+          <div className="mt-5 space-y-3">
+            {team.members.map((member) => (
+              <div key={member.id} className="flex items-center gap-3 rounded-lg border border-gray-100 bg-gray-50 p-3">
+                <MemberAvatar member={member} />
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="truncate text-sm font-black text-gray-900">{member.username}</div>
+                    {member.is_captain && (
+                      <span className="rounded bg-amber-100 px-2 py-0.5 text-[10px] font-black uppercase text-amber-700">Captain</span>
+                    )}
+                  </div>
+                  <p className="truncate text-xs text-gray-500">{member.skills || member.email}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {(message || error) && (
+        <div className={`rounded-md border px-4 py-3 text-sm font-semibold ${error ? 'border-red-200 bg-red-50 text-red-700' : 'border-green-200 bg-green-50 text-green-700'}`}>
+          {error || message}
+        </div>
+      )}
+    </aside>
+  );
+}
+
+export default function HackathonHub({ stages, progress, round2Eligible, onLaunchOA, onLaunchProject }) {
+  const navigate = useNavigate();
+  const [teamPayload, setTeamPayload] = useState(null);
+  const [teamError, setTeamError] = useState('');
+  const participantStatuses = getParticipantStatuses(stages, progress, round2Eligible);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadTeam = async () => {
+      try {
+        const response = await apiClient.get('/teams/me');
+        if (isMounted) setTeamPayload(response.data);
+      } catch (error) {
+        if (isMounted) setTeamError(formatApiError(error, 'Could not load team details.'));
+      }
+    };
+
+    loadTeam();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const registrationStatus = participantStatuses.registration;
+  const round1Status = participantStatuses.round1;
+  const round2Status = participantStatuses.round2;
+  const finaleStatus = participantStatuses.finale;
+  const hasTeam = Boolean(teamPayload?.team);
+
+  const registrationClasses = getPhaseClasses(registrationStatus);
+  const round1Classes = getPhaseClasses(round1Status);
+  const round2Classes = getPhaseClasses(round2Status);
+  const finaleClasses = getPhaseClasses(finaleStatus, 'purple');
+
+  return (
+    <div className="mx-auto mt-8 grid max-w-6xl grid-cols-1 gap-8 pb-12 lg:grid-cols-3">
+      <div className="relative space-y-0 lg:col-span-2">
+        <div className="absolute bottom-8 left-[27px] top-8 z-0 hidden w-0.5 border-l border-dashed border-gray-400 bg-gray-200 sm:block"></div>
+
+        <div className="relative flex items-start p-4 sm:mb-8 sm:p-0">
+          <div className={`z-10 mr-6 mt-4 hidden h-14 w-14 items-center justify-center rounded-full border shadow-sm sm:flex ${registrationClasses.circle}`}>
+            <span className={`${registrationClasses.icon} text-lg font-bold`}>
+              {registrationStatus === 'completed' ? 'OK' : '0'}
+            </span>
+          </div>
+          <div className={`relative flex-1 overflow-hidden rounded-xl border bg-white p-6 shadow-sm ${registrationClasses.card}`}>
+            {registrationClasses.stripe && <div className={`absolute left-0 top-0 h-full w-1 ${registrationClasses.stripe}`}></div>}
+            <div className="mb-2 flex items-start justify-between gap-4">
+              <h3 className="text-lg font-bold text-gray-900">Team Registration</h3>
+              <span className={`rounded-full px-3 py-1 text-xs font-semibold ${registrationClasses.badge}`}>
+                {hasTeam ? 'Team Ready' : registrationStatus === 'active' ? 'Open Now' : PHASE_LABELS[registrationStatus]}
+              </span>
+            </div>
+            <p className="mb-4 text-sm text-gray-600">
+              {hasTeam
+                ? `${teamPayload.team.name} is registered with ${teamPayload.team.member_count} member${teamPayload.team.member_count === 1 ? '' : 's'}.`
+                : registrationStatus === 'active'
+                  ? 'Create a team or join one with an invite code before Round 1.'
+                  : 'Team registration is not open yet.'}
+            </p>
+            <button disabled className="cursor-default rounded-lg border border-gray-200 bg-gray-50 px-6 py-2 text-sm font-medium text-gray-500">
+              {hasTeam ? 'Registration Complete' : registrationStatus === 'active' ? 'Team Setup Required' : 'Registration Locked'}
+            </button>
           </div>
         </div>
 
-        {/* Sponsor Banner Mockup */}
-        <div className="bg-gray-900 rounded-xl overflow-hidden shadow-lg border border-gray-800 p-6 text-white text-center">
-          <h4 className="font-bold mb-2">Powered By</h4>
-          <div className="text-3xl font-extrabold tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-emerald-400">
-            FastAPI & React
+        <div className="relative flex items-start p-4 sm:mb-8 sm:p-0">
+          <div className={`z-10 mr-6 mt-4 hidden h-14 w-14 items-center justify-center rounded-full border shadow-sm sm:flex ${round1Classes.circle}`}>
+            <span className={`${round1Classes.icon} text-lg font-bold`}>{round1Status === 'completed' ? 'OK' : '1'}</span>
+          </div>
+          <div className={`relative flex-1 overflow-hidden rounded-xl border bg-white p-6 shadow-md ${round1Classes.card}`}>
+            {round1Classes.stripe && <div className={`absolute left-0 top-0 h-full w-1 ${round1Classes.stripe}`}></div>}
+            <div className="mb-2 flex items-start justify-between gap-4">
+              <h3 className="text-lg font-bold text-gray-900">Round 1: Online Assessment</h3>
+              <span className={`rounded-full px-3 py-1 text-xs font-semibold ${round1Classes.badge} ${round1Status === 'active' ? 'animate-pulse' : ''}`}>
+                {PHASE_LABELS[round1Status]}
+              </span>
+            </div>
+            <p className="mb-6 mt-3 text-sm text-gray-600">Complete the algorithmic coding challenges and multiple-choice questions within the time limit.</p>
+            {round1Status === 'active' ? (
+              <button
+                onClick={onLaunchOA}
+                disabled={!hasTeam}
+                className="w-full rounded-lg bg-blue-600 px-6 py-2 font-medium text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400 sm:w-auto"
+              >
+                {hasTeam ? 'Launch Assessment' : 'Create or Join Team First'}
+              </button>
+            ) : (
+              <button disabled className="w-full cursor-not-allowed rounded-lg bg-gray-100 px-6 py-2 font-medium text-gray-400 sm:w-auto">
+                {round1Status === 'completed' ? 'Assessment Closed' : 'Not Open Yet'}
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div className="relative flex items-start p-4 sm:mb-8 sm:p-0">
+          <div className={`z-10 mr-6 mt-4 hidden h-14 w-14 items-center justify-center rounded-full border shadow-sm sm:flex ${round2Classes.circle}`}>
+            <span className={`${round2Classes.icon} text-lg font-bold`}>{round2Status === 'completed' ? 'OK' : '2'}</span>
+          </div>
+          <div className={`relative flex-1 overflow-hidden rounded-xl border bg-white p-6 shadow-sm ${round2Classes.card}`}>
+            {round2Classes.stripe && <div className={`absolute left-0 top-0 h-full w-1 ${round2Classes.stripe}`}></div>}
+            <div className="mb-2 flex items-start justify-between gap-4">
+              <h3 className="text-lg font-bold text-gray-900">Round 2: Virtual Build Phase</h3>
+              <span className={`rounded-full px-3 py-1 text-xs font-semibold ${round2Classes.badge} ${round2Status === 'active' ? 'animate-pulse' : ''}`}>
+                {PHASE_LABELS[round2Status]}
+              </span>
+            </div>
+            <p className="mb-4 text-sm text-gray-600">Promoted teams will submit their GitHub repository, tech stack details, and presentation assets.</p>
+            {round2Status === 'active' ? (
+              <button onClick={onLaunchProject} className="w-full rounded-lg bg-blue-600 px-6 py-2 font-medium text-white shadow-sm transition hover:bg-blue-700 sm:w-auto">
+                Open Project Builder
+              </button>
+            ) : (
+              <button disabled className="w-full cursor-not-allowed rounded-lg bg-gray-100 px-6 py-2 font-medium text-gray-400 sm:w-auto">
+                {round2Status === 'completed' ? 'Submissions Closed' : 'Not Open Yet'}
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div className="relative flex items-start p-4 sm:mb-8 sm:p-0">
+          <div className={`z-10 mr-6 mt-4 hidden h-14 w-14 items-center justify-center rounded-full border shadow-sm sm:flex ${finaleClasses.circle}`}>
+            <span className={`${finaleClasses.icon} text-lg font-bold`}>3</span>
+          </div>
+          <div className={`relative flex-1 overflow-hidden rounded-xl border bg-white p-6 shadow-sm ${finaleStatus === 'completed' ? 'border-yellow-400' : finaleClasses.card}`}>
+            {finaleStatus === 'active' && <div className={`absolute left-0 top-0 h-full w-1 ${finaleClasses.stripe}`}></div>}
+            {finaleStatus === 'completed' && <div className="absolute left-0 top-0 h-full w-1 bg-yellow-400"></div>}
+            <div className="mb-2 flex items-start justify-between gap-4">
+              <h3 className="text-lg font-bold text-gray-900">Round 3: Grand Finale</h3>
+              {finaleStatus === 'active' && <span className="rounded-full bg-purple-100 px-3 py-1 text-xs font-semibold text-purple-700 animate-pulse">Grading Live</span>}
+              {finaleStatus === 'locked' && <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-semibold text-gray-500">Not Open Yet</span>}
+              {finaleStatus === 'completed' && <span className="rounded-full bg-yellow-100 px-3 py-1 text-xs font-bold text-yellow-800">Final Results</span>}
+            </div>
+            <p className="mb-4 text-sm text-gray-600">The top teams pitch their projects live. Judges submit evaluations in real time to the global leaderboard.</p>
+            {finaleStatus === 'active' && (
+              <button onClick={() => navigate('/leaderboard')} className="w-full rounded-lg bg-purple-600 px-6 py-2 font-bold text-white shadow-sm transition hover:bg-purple-700 sm:w-auto">
+                Live Results
+              </button>
+            )}
+            {finaleStatus === 'completed' && (
+              <button onClick={() => navigate('/leaderboard')} className="w-full rounded-lg bg-gray-900 px-6 py-2 font-bold text-white shadow-sm transition hover:bg-black sm:w-auto">
+                View Final Results
+              </button>
+            )}
+            {finaleStatus === 'locked' && (
+              <button disabled className="w-full cursor-not-allowed rounded-lg bg-gray-100 px-6 py-2 font-medium text-gray-400 sm:w-auto">
+                Awaiting Finale
+              </button>
+            )}
           </div>
         </div>
       </div>
+
+      {teamPayload ? (
+        <TeamPanel teamPayload={teamPayload} setTeamPayload={setTeamPayload} />
+      ) : (
+        <aside className="rounded-xl border border-gray-200 bg-white p-6 text-sm font-semibold text-gray-500 shadow-sm">
+          {teamError || 'Loading team setup...'}
+        </aside>
+      )}
     </div>
   );
 }
