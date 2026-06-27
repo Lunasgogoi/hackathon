@@ -1,7 +1,7 @@
 # app/main.py
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api import coding, admin , project , leaderboard , auth
+from app.api import coding, admin , project , leaderboard , auth , mcq
 
 
 app = FastAPI(
@@ -13,7 +13,10 @@ app = FastAPI(
 # Standard CORS setup for our future React frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -25,8 +28,7 @@ app.include_router(admin.router,prefix="/api/v1")
 app.include_router(project.router,prefix="/api/v1")
 app.include_router(leaderboard.router,prefix="/api/v1")
 app.include_router(auth.router,prefix="/api/v1")
-
-
+app.include_router(mcq.router, prefix="/api/v1")
 @app.get("/")
 async def health_check():
     return {

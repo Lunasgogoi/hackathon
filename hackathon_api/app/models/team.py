@@ -12,3 +12,6 @@ class Team(Base):
     
     # One-to-Many relationship: One team has many users
     members = relationship("User", back_populates="team", foreign_keys="User.team_id")
+
+    # Add this to the bottom of the Team class
+    project = relationship("ProjectSubmission", back_populates="team", uselist=False)

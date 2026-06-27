@@ -1,30 +1,108 @@
-# app/api/coding.py
+import asyncio
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
-from app.db.session import SessionLocal
-from app.models.user import User
-from app.models.coding import CodingSubmission, CodingProblem, SubmissionStatus
-from app.schemas.coding import CodeSubmitRequest, Judge0WebhookResponse
-
-# Assuming you brought over get_db and get_current_user from your last project
+from app.models.user import User, RoleEnum
+from app.models.coding import CodingSubmission, CodingProblem, TestCase, SubmissionStatus
+from app.schemas.coding import CodeSubmitRequest
 from app.api.deps import get_db, get_current_user
 
 router = APIRouter(prefix="/coding", tags=["Coding Round"])
 
-JUDGE0_URL = "https://judge0-ce.p.rapidapi.com"
-JUDGE0_HEADERS = {
-    "X-RapidAPI-Key": "YOUR_RAPIDAPI_KEY",  # You'd put this in your .env file
-    "X-RapidAPI-Host": "judge0-ce.p.rapidapi.com",
-    "Content-Type": "application/json",
+# Piston Public API (Rate limited, but great for dev. Self-host for prod!)
+PISTON_URL = "https://emkc.org/api/v2/piston/execute"
+
+# Map frontend IDs to Piston language identifiers
+LANGUAGE_MAP = {
+    71: {"language": "python", "version": "3.10.0", "local": "python"},
+    54: {"language": "c++", "version": "10.2.0", "local": "cpp"},
+    63: {"language": "javascript", "version": "18.15.0", "local": "javascript"}
 }
 
-# The URL Judge0 will call when it finishes grading
-# In production, this would be your actual domain (e.g., https://api.myhackathon.com/...)
-WEBHOOK_URL = "https://YOUR_NGROK_URL/api/v1/coding/webhook"
 
+async def _run_process(command: list[str], stdin: str, timeout_seconds: float) -> dict:
+    try:
+        completed = await asyncio.to_thread(
+            subprocess.run,
+            command,
+            input=stdin,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except subprocess.TimeoutExpired:
+        return {
+            "code": 124,
+            "stdout": "",
+            "stderr": "Time limit exceeded",
+            "output": "Time limit exceeded",
+        }
+
+    return {
+        "code": completed.returncode,
+        "stdout": completed.stdout,
+        "stderr": completed.stderr,
+        "output": completed.stderr or completed.stdout,
+    }
+
+
+async def run_code_locally(lang_config: dict, source_code: str, stdin: str, timeout_seconds: float) -> dict:
+    local_language = lang_config["local"]
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_path = Path(temp_dir)
+
+        if local_language == "python":
+            source_path = temp_path / "solution.py"
+            source_path.write_text(source_code, encoding="utf-8")
+            run = await _run_process([sys.executable, str(source_path)], stdin, timeout_seconds)
+            return {"compile": {"code": 0, "output": ""}, "run": run}
+
+        if local_language == "javascript":
+            node_path = shutil.which("node")
+            if not node_path:
+                return {
+                    "compile": {"code": 1, "output": "Node.js is not installed on the server."},
+                    "run": {},
+                }
+
+            source_path = temp_path / "solution.js"
+            source_path.write_text(source_code, encoding="utf-8")
+            run = await _run_process([node_path, str(source_path)], stdin, timeout_seconds)
+            return {"compile": {"code": 0, "output": ""}, "run": run}
+
+        if local_language == "cpp":
+            compiler_path = shutil.which("g++")
+            if not compiler_path:
+                return {
+                    "compile": {"code": 1, "output": "g++ is not installed on the server."},
+                    "run": {},
+                }
+
+            source_path = temp_path / "solution.cpp"
+            output_path = temp_path / "solution.exe"
+            source_path.write_text(source_code, encoding="utf-8")
+            compile_result = await _run_process(
+                [compiler_path, str(source_path), "-O2", "-std=c++17", "-o", str(output_path)],
+                "",
+                10,
+            )
+            if compile_result["code"] != 0:
+                return {"compile": compile_result, "run": {}}
+
+            run = await _run_process([str(output_path)], stdin, timeout_seconds)
+            return {"compile": {"code": 0, "output": ""}, "run": run}
+
+    return {"compile": {"code": 1, "output": "Unsupported local language."}, "run": {}}
 
 @router.post("/submit")
 async def submit_code(
@@ -32,22 +110,24 @@ async def submit_code(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-
-    from app.models.user import RoleEnum
-
     if current_user.role != RoleEnum.participant:
-        raise HTTPException(
-            status_code=403, detail="Only official participants can submit code."
-        )
-    # 1. Verify the problem exists
-    problem_check = await db.execute(
-        select(CodingProblem).where(CodingProblem.id == request.problem_id)
-    )
-    problem = problem_check.scalar_one_or_none()
+        raise HTTPException(status_code=403, detail="Only participants can submit code.")
+
+    # 1. Verify problem & fetch test case
+    problem = (await db.execute(select(CodingProblem).where(CodingProblem.id == request.problem_id))).scalar_one_or_none()
     if not problem:
         raise HTTPException(status_code=404, detail="Problem not found")
 
-    # 2. Save the pending submission to the database
+    test_case = (await db.execute(select(TestCase).where(TestCase.problem_id == problem.id).limit(1))).scalar_one_or_none()
+    if not test_case:
+        raise HTTPException(status_code=500, detail="No test cases configured.")
+
+    # 2. Get Piston language config
+    lang_config = LANGUAGE_MAP.get(request.language_id)
+    if not lang_config:
+        raise HTTPException(status_code=400, detail="Unsupported language ID")
+
+    # 3. Create the initial submission record
     submission = CodingSubmission(
         user_id=current_user.id,
         problem_id=request.problem_id,
@@ -59,68 +139,74 @@ async def submit_code(
     await db.commit()
     await db.refresh(submission)
 
-    # 3. Send payload to Judge0 (Using test case 1 for simplicity here)
-    # The 'callback_url' is the magic piece. It tells Judge0 where to send the results.
-    judge0_payload = {
-        "source_code": request.source_code,
-        "language_id": request.language_id,
-        "stdin": "2 4",  # Ideally pulled dynamically from your TestCase table
-        "expected_output": "6",
-        "callback_url": f"{WEBHOOK_URL}?submission_id={submission.id}",
+    # 4. Construct Piston Payload
+    payload = {
+        "language": lang_config["language"],
+        "version": lang_config["version"],
+        "files": [{"content": request.source_code}],
+        "stdin": test_case.stdin,
+        "compile_timeout": 10000,
+        "run_timeout": int(problem.time_limit_seconds * 1000),
     }
 
-    # async with httpx.AsyncClient() as client:
-    #     response = await client.post(
-    #         f"{JUDGE0_URL}/submissions/?base64_encoded=false",
-    #         json=judge0_payload,
-    #         headers=JUDGE0_HEADERS
-    #     )
+    # 5. Execute via Piston first, then fall back to local execution for dev/demo use.
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.post(PISTON_URL, json=payload, timeout=15.0)
+            response.raise_for_status()
+            result = response.json()
+        except httpx.HTTPError:
+            try:
+                result = await run_code_locally(
+                    lang_config,
+                    request.source_code,
+                    test_case.stdin,
+                    problem.time_limit_seconds,
+                )
+            except Exception as exc:
+                result = {
+                    "compile": {
+                        "code": 1,
+                        "output": f"Local execution failed: {exc}",
+                    },
+                    "run": {},
+                }
 
-    #     if response.status_code != 201:
-    #         # If Judge0 is down, mark as error
-    #         submission.status = SubmissionStatus.error
-    #         await db.commit()
-    #         raise HTTPException(status_code=500, detail="Grading engine offline")
-    print(f"MOCK: Sent submission {submission.id} to Judge0!")
+    # 6. Evaluate the Piston Result
+    compile_result = result.get("compile", {})
+    run_result = result.get("run", {})
 
-    # 4. Return immediately to the user while Judge0 grades in the background
-    return {"message": "Code submitted for evaluation!", "submission_id": submission.id}
-
-
-@router.put("/webhook")
-async def judge0_webhook(
-    submission_id: int,
-    result: Judge0WebhookResponse,
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    Judge0 calls this automatically.
-    Status ID 3 = Accepted (Pass). Anything else = Fail/Error.
-    """
-    # Find the pending submission
-    db_result = await db.execute(
-        select(CodingSubmission).where(CodingSubmission.id == submission_id)
-    )
-    submission = db_result.scalar_one_or_none()
-
-    if not submission:
-        raise HTTPException(status_code=404, detail="Submission not found")
-
-    # Map Judge0 status to our database Enum
-    if result.status.id == 3:
-        submission.status = SubmissionStatus.accepted
-    elif result.status.id == 4:
-        submission.status = SubmissionStatus.wrong_answer
-    elif result.status.id == 5:
-        submission.status = SubmissionStatus.time_limit
-    else:
+    if compile_result.get("code") != 0 and compile_result.get("code") is not None:
         submission.status = SubmissionStatus.error
+        actual_output = compile_result.get("output", "Compilation Error")
+    elif run_result.get("code") == 124:
+        submission.status = SubmissionStatus.time_limit
+        actual_output = run_result.get("output", "Time limit exceeded")
+    elif run_result.get("code") != 0:
+        submission.status = SubmissionStatus.error
+        actual_output = run_result.get("output", "Runtime Error")
+    else:
+        # Compare actual output with expected (strip trailing newlines/spaces)
+        actual_output = run_result.get("stdout", "").strip()
+        expected_output = test_case.expected_stdout.strip()
+        
+        if actual_output == expected_output:
+            submission.status = SubmissionStatus.accepted
+        else:
+            submission.status = SubmissionStatus.wrong_answer
 
-    # Save the execution time if it passed
-    if result.time:
-        submission.execution_time = float(result.time)
-
+    # 7. Update Database and Return immediately to the frontend
     await db.commit()
 
-    # Return 200 so Judge0 knows we received the webhook successfully
-    return {"status": "Webhook received and database updated"}
+    return {
+        "status": submission.status.value,
+        "passed_cases": 1 if submission.status == SubmissionStatus.accepted else 0,
+        "total_cases": 1,
+        "details": [{
+            "id": test_case.id,
+            "passed": submission.status == SubmissionStatus.accepted,
+            "input": test_case.stdin,
+            "expected": test_case.expected_stdout,
+            "output": actual_output
+        }]
+    }

@@ -8,11 +8,8 @@ from alembic import context
 
 # alembic/env.py
 from app.db.base import Base
-from app.models.user import User  # noqa: F401
-from app.models.team import Team  # noqa: F401
-from app.models.coding import CodingProblem, TestCase, CodingSubmission # noqa: F401
-from app.models.project import ProjectSubmission, RubricEvaluation # Add this line!
-from app.models.system import SystemState # Add this line!
+import app.models  # noqa: F401 - register all SQLAlchemy models for autogenerate
+
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config

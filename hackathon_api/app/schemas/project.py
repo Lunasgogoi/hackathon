@@ -7,6 +7,7 @@ class ProjectCreate(BaseModel):
     repo_url: HttpUrl
     video_demo_url: HttpUrl | None = None
     tech_stack: str
+    asset_url: HttpUrl | None = None # NEW: Accept from React payload
 
 class RubricSubmit(BaseModel):
     project_id: int

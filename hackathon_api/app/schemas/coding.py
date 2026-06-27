@@ -18,3 +18,7 @@ class Judge0WebhookResponse(BaseModel):
     status: Judge0Status
     time: Optional[str] = None
     memory: Optional[int] = None
+    
+class MCQSubmitRequest(BaseModel):
+    question_id: int
+    selected_option: str # e.g., "A"

@@ -92,3 +92,11 @@ async def trigger_live_update(
     })
     
     return {"message": "Leaderboard broadcast successful"}
+
+async def broadcast(self, data: dict):
+        """Generic broadcast for Admin phase changes and alerts"""
+        for connection in self.active_connections:
+            try:
+                await connection.send_text(json.dumps(data))
+            except Exception:
+                pass

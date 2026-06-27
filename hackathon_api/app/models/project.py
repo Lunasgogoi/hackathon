@@ -9,15 +9,18 @@ class ProjectSubmission(Base):
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), unique=True)
     
-    # Project Details
     title: Mapped[str] = mapped_column(String(100), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
     repo_url: Mapped[str] = mapped_column(String(255), nullable=False)
     video_demo_url: Mapped[str] = mapped_column(String(255), nullable=True)
-    tech_stack: Mapped[str] = mapped_column(String(255)) # e.g., "React, Node, Postgres"
+    tech_stack: Mapped[str] = mapped_column(String(255))
+    
+    # NEW: Store the Cloudinary URL
+    asset_url: Mapped[str] = mapped_column(String(255), nullable=True) 
 
-    # A project can have multiple evaluations from different judges
     evaluations = relationship("RubricEvaluation", back_populates="project", cascade="all, delete-orphan")
+    team = relationship("Team", back_populates="project") # Link back to team
+
 
 class RubricEvaluation(Base):
     __tablename__ = "rubric_evaluations"
@@ -26,13 +29,12 @@ class RubricEvaluation(Base):
     project_id: Mapped[int] = mapped_column(ForeignKey("project_submissions.id", ondelete="CASCADE"))
     judge_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     
-    # The Rubric (e.g., Scored 1 to 10)
     ui_ux_score: Mapped[float] = mapped_column(Float, nullable=False)
     technical_complexity: Mapped[float] = mapped_column(Float, nullable=False)
     innovation: Mapped[float] = mapped_column(Float, nullable=False)
-    
-    # Auto-calculated in the backend
     total_score: Mapped[float] = mapped_column(Float, nullable=False)
     feedback: Mapped[str] = mapped_column(Text, nullable=True)
 
     project = relationship("ProjectSubmission", back_populates="evaluations")
+    # NEW: Establish the relationship to the User (Judge)
+    judge = relationship("User", back_populates="evaluations_given")

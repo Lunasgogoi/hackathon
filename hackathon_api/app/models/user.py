@@ -32,4 +32,7 @@ class User(Base):
     # Add to app/models/user.py
     coding_submissions = relationship("CodingSubmission", back_populates="user") # Requires importing CodingSubmission at the top (or using a string reference
     
+    # Add this to the bottom of the User class
+    evaluations_given = relationship("RubricEvaluation", back_populates="judge")
     
+    mcq_submissions = relationship("MCQSubmission", back_populates="user")
