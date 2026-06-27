@@ -44,7 +44,8 @@ async def submit_project(
         description=request.description,
         repo_url=str(request.repo_url),
         video_demo_url=str(request.video_demo_url) if request.video_demo_url else None,
-        tech_stack=request.tech_stack
+        tech_stack=request.tech_stack,
+        asset_url=str(request.asset_url) if request.asset_url else None
     )
     db.add(new_project)
     await db.commit()
@@ -75,6 +76,7 @@ async def get_pending_projects(
             "repo_url": project.repo_url,
             "video_demo_url": project.video_demo_url,
             "tech_stack": project.tech_stack,
+            "asset_url": project.asset_url,
         }
         for project in projects
         if project.id not in evaluated_project_ids

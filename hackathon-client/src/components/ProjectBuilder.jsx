@@ -2,6 +2,24 @@ import { useState } from 'react';
 import axios from 'axios';
 import { apiClient } from '../api/client';
 
+const formatApiError = (error) => {
+  const detail = error.response?.data?.detail;
+
+  if (Array.isArray(detail)) {
+    return detail
+      .map((item) => {
+        const field = item.loc?.filter((part) => part !== 'body').join('.') || 'request';
+        return `${field}: ${item.msg}`;
+      })
+      .join('\n');
+  }
+
+  if (typeof detail === 'string') return detail;
+  if (detail && typeof detail === 'object') return JSON.stringify(detail);
+
+  return 'An error occurred submitting your project.';
+};
+
 
 export default function ProjectBuilder({ onExit }) {
   const [currentStep, setCurrentStep] = useState(1);
@@ -86,15 +104,23 @@ export default function ProjectBuilder({ onExit }) {
         title: formData.projectName,
         description: formData.description,
         repo_url: formData.repoUrl,
-        video_demo_url: formData.videoUrl,
+        video_demo_url: formData.videoUrl || null,
         tech_stack: formData.techStack,
-        asset_url: formData.assetUrl
+        asset_url: formData.assetUrl || null
       });
 
       alert(`Success! ${response.data.message}`);
       onExit(true);
     } catch (error) {
-      alert(error.response?.data?.detail || 'An error occurred submitting your project.');
+      const message = formatApiError(error);
+
+      if (message.includes('already submitted')) {
+        alert(message);
+        onExit(true);
+        return;
+      }
+
+      alert(message);
     }
   };
 
