@@ -108,7 +108,7 @@ const MainLayout = ({ children, onSignOut }) => {
             onClick={() => navigate('/leaderboard')}
             className="text-sm font-bold text-indigo-600 bg-indigo-50 px-3 py-1.5 rounded hover:bg-indigo-100 transition"
           >
-            Launch Projector 📺
+            Projector View
           </button>
           <button onClick={onSignOut} className="text-sm font-medium text-gray-500 hover:text-red-600 transition">
             Sign Out

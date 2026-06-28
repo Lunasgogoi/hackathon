@@ -6,6 +6,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import ensure_phase_active, get_current_user, get_db
+from app.core.config import settings
 from app.core.email import send_round1_qualified_email
 from app.models.assessment import Assessment, AssessmentAttempt
 from app.models.coding import CodingProblem, CodingSubmission, SubmissionStatus, TestCase
@@ -372,6 +373,9 @@ async def reset_my_assessment_for_dev(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    if not settings.ENABLE_DEV_ROUTES:
+        raise HTTPException(status_code=404, detail="Not found.")
+
     if current_user.role != RoleEnum.participant:
         raise HTTPException(status_code=403, detail="Only participants can reset their assessment.")
 

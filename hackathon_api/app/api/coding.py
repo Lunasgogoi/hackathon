@@ -1,9 +1,8 @@
 import asyncio
 import httpx
-import shutil
 import subprocess
-import sys
 import tempfile
+import uuid
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -71,54 +70,143 @@ async def _run_process(command: list[str], stdin: str, timeout_seconds: float) -
     }
 
 
-async def run_code_locally(lang_config: dict, source_code: str, stdin: str, timeout_seconds: float) -> dict:
+def _docker_image_for_language(local_language: str) -> str:
+    images = {
+        "python": settings.PYTHON_RUNNER_IMAGE,
+        "javascript": settings.JAVASCRIPT_RUNNER_IMAGE,
+        "cpp": settings.CPP_RUNNER_IMAGE,
+    }
+    return images[local_language]
+
+
+def _build_docker_command(
+    *,
+    image: str,
+    workspace: Path,
+    container_name: str,
+    shell_command: str,
+) -> list[str]:
+    return [
+        "docker",
+        "run",
+        "--rm",
+        "--name",
+        container_name,
+        "--network",
+        "none",
+        "--memory",
+        settings.CODE_RUNNER_MEMORY_LIMIT,
+        "--cpus",
+        settings.CODE_RUNNER_CPUS,
+        "--pids-limit",
+        str(settings.CODE_RUNNER_PIDS_LIMIT),
+        "--cap-drop",
+        "ALL",
+        "--security-opt",
+        "no-new-privileges",
+        "--read-only",
+        "--tmpfs",
+        f"/tmp:rw,nosuid,size={settings.CODE_RUNNER_TMPFS_SIZE}",
+        "-i",
+        "-v",
+        f"{workspace}:/workspace:rw",
+        "-w",
+        "/workspace",
+        image,
+        "sh",
+        "-lc",
+        shell_command,
+    ]
+
+
+async def _run_docker_command(
+    *,
+    image: str,
+    workspace: Path,
+    shell_command: str,
+    stdin: str,
+    timeout_seconds: float,
+) -> dict:
+    container_name = f"hackcore-code-{uuid.uuid4().hex}"
+    command = _build_docker_command(
+        image=image,
+        workspace=workspace,
+        container_name=container_name,
+        shell_command=shell_command,
+    )
+
+    try:
+        return await _run_process(command, stdin, timeout_seconds)
+    except FileNotFoundError:
+        return {
+            "code": 1,
+            "stdout": "",
+            "stderr": "Docker is not installed or is not available to the API process.",
+            "output": "Docker is not installed or is not available to the API process.",
+        }
+    finally:
+        try:
+            await asyncio.to_thread(
+                subprocess.run,
+                ["docker", "rm", "-f", container_name],
+                capture_output=True,
+                text=True,
+            )
+        except FileNotFoundError:
+            pass
+
+
+async def run_code_in_docker(lang_config: dict, source_code: str, stdin: str, timeout_seconds: float) -> dict:
     local_language = lang_config["local"]
+    image = _docker_image_for_language(local_language)
 
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_path = Path(temp_dir)
 
         if local_language == "python":
-            source_path = temp_path / "solution.py"
-            source_path.write_text(source_code, encoding="utf-8")
-            run = await _run_process([sys.executable, str(source_path)], stdin, timeout_seconds)
+            (temp_path / "solution.py").write_text(source_code, encoding="utf-8")
+            run = await _run_docker_command(
+                image=image,
+                workspace=temp_path,
+                shell_command="python /workspace/solution.py",
+                stdin=stdin,
+                timeout_seconds=timeout_seconds,
+            )
             return {"compile": {"code": 0, "output": ""}, "run": run}
 
         if local_language == "javascript":
-            node_path = shutil.which("node")
-            if not node_path:
-                return {
-                    "compile": {"code": 1, "output": "Node.js is not installed on the server."},
-                    "run": {},
-                }
-
-            source_path = temp_path / "solution.js"
-            source_path.write_text(source_code, encoding="utf-8")
-            run = await _run_process([node_path, str(source_path)], stdin, timeout_seconds)
+            (temp_path / "solution.js").write_text(source_code, encoding="utf-8")
+            run = await _run_docker_command(
+                image=image,
+                workspace=temp_path,
+                shell_command="node /workspace/solution.js",
+                stdin=stdin,
+                timeout_seconds=timeout_seconds,
+            )
             return {"compile": {"code": 0, "output": ""}, "run": run}
 
         if local_language == "cpp":
-            compiler_path = shutil.which("g++")
-            if not compiler_path:
-                return {
-                    "compile": {"code": 1, "output": "g++ is not installed on the server."},
-                    "run": {},
-                }
-
-            source_path = temp_path / "solution.cpp"
-            output_path = temp_path / "solution.exe"
-            source_path.write_text(source_code, encoding="utf-8")
-            compile_result = await _run_process(
-                [compiler_path, str(source_path), "-O2", "-std=c++17", "-o", str(output_path)],
-                "",
-                10,
+            (temp_path / "solution.cpp").write_text(source_code, encoding="utf-8")
+            compile_result = await _run_docker_command(
+                image=image,
+                workspace=temp_path,
+                shell_command="g++ /workspace/solution.cpp -O2 -std=c++17 -o /workspace/solution",
+                stdin="",
+                timeout_seconds=settings.CODE_RUNNER_COMPILE_TIMEOUT_SECONDS,
             )
             if compile_result["code"] != 0:
                 return {"compile": compile_result, "run": {}}
 
-            run = await _run_process([str(output_path)], stdin, timeout_seconds)
+            run = await _run_docker_command(
+                image=image,
+                workspace=temp_path,
+                shell_command="/workspace/solution",
+                stdin=stdin,
+                timeout_seconds=timeout_seconds,
+            )
             return {"compile": {"code": 0, "output": ""}, "run": run}
 
-    return {"compile": {"code": 1, "output": "Unsupported local language."}, "run": {}}
+    return {"compile": {"code": 1, "output": "Unsupported Docker language."}, "run": {}}
 
 
 async def execute_code(lang_config: dict, source_code: str, stdin: str, timeout_seconds: float) -> dict:
@@ -137,11 +225,14 @@ async def execute_code(lang_config: dict, source_code: str, stdin: str, timeout_
                 response = await client.post(settings.PISTON_EXECUTE_URL, json=payload, timeout=15.0)
                 response.raise_for_status()
                 return response.json()
-        except httpx.HTTPError:
-            pass
+        except httpx.HTTPError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Piston code runner is unavailable: {exc}",
+            ) from exc
 
     try:
-        return await run_code_locally(
+        return await run_code_in_docker(
             lang_config,
             source_code,
             stdin,
@@ -151,7 +242,7 @@ async def execute_code(lang_config: dict, source_code: str, stdin: str, timeout_
         return {
             "compile": {
                 "code": 1,
-                "output": f"Local execution failed: {exc}",
+                "output": f"Docker execution failed: {exc}",
             },
             "run": {},
         }
@@ -199,12 +290,17 @@ async def submit_code(
     # 4. Execute every configured test case.
     case_results = []
     for test_case in test_cases:
-        result = await execute_code(
-            lang_config,
-            request.source_code,
-            test_case.stdin,
-            problem.time_limit_seconds,
-        )
+        try:
+            result = await execute_code(
+                lang_config,
+                request.source_code,
+                test_case.stdin,
+                problem.time_limit_seconds,
+            )
+        except HTTPException:
+            submission.status = SubmissionStatus.error
+            await db.commit()
+            raise
 
         compile_result = result.get("compile", {})
         run_result = result.get("run", {})

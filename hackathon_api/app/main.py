@@ -5,6 +5,7 @@ from app.api import assessment, coding, admin , project , leaderboard , auth , m
 from sqlalchemy.future import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import Depends
+from app.core.config import settings
 from app.db.session import get_db
 from app.models.system import SystemState
 from app.core.websocket import manager
@@ -15,13 +16,9 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Standard CORS setup for our future React frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ],
+    allow_origins=settings.cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

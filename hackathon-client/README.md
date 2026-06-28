@@ -1,16 +1,60 @@
-# React + Vite
+# HackCore Client
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+React frontend for the HackCore hackathon platform. It covers participant registration, team management, Round 1 assessment, Round 2 project submission, judge evaluation, admin controls, live leaderboard, and certificate access.
 
-Currently, two official plugins are available:
+## Setup
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+Install dependencies:
 
-## React Compiler
+```powershell
+npm install
+```
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+Create `.env` from `.env.example` and point it at the API:
 
-## Expanding the ESLint configuration
+```env
+VITE_API_BASE_URL=http://127.0.0.1:8000/api/v1
+VITE_WS_BASE_URL=ws://127.0.0.1:8000/api/v1
+```
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+`VITE_WS_BASE_URL` is optional. If omitted, the app derives the websocket URL from `VITE_API_BASE_URL`.
+
+## Run
+
+Start the local development server:
+
+```powershell
+npm run dev
+```
+
+Create a production build:
+
+```powershell
+npm run build
+```
+
+Preview the production build locally:
+
+```powershell
+npm run preview
+```
+
+Run lint checks:
+
+```powershell
+npm run lint
+```
+
+## Environment
+
+- `VITE_API_BASE_URL`: REST API base URL, including `/api/v1`.
+- `VITE_WS_BASE_URL`: websocket base URL, including `/api/v1`.
+- `VITE_CLOUDINARY_CLOUD_NAME`: Cloudinary cloud name for project assets.
+- `VITE_CLOUDINARY_UPLOAD_PRESET`: unsigned upload preset for project assets.
+
+## Deployment Notes
+
+- Set `VITE_API_BASE_URL` to the deployed backend origin plus `/api/v1`.
+- Use `wss://` for `VITE_WS_BASE_URL` when the frontend is served over HTTPS.
+- Make sure the backend `BACKEND_CORS_ORIGINS` includes the deployed frontend origin.
+- Build output is written to `dist/`.

@@ -3,7 +3,6 @@ from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import func
-from typing import List
 import json
 
 
@@ -17,20 +16,28 @@ router = APIRouter(prefix="/leaderboard", tags=["Round 3: Live Finals"])
 # --- WebSocket Manager ---
 class ConnectionManager:
     def __init__(self):
-        # Store all active connections
-        self.active_connections: List[WebSocket] = []
+        self.active_connections: list[WebSocket] = []
 
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
         self.active_connections.append(websocket)
 
     def disconnect(self, websocket: WebSocket):
-        self.active_connections.remove(websocket)
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
 
     async def broadcast_leaderboard(self, data: dict):
-        # Push the JSON data to every connected screen instantly
-        for connection in self.active_connections:
-            await connection.send_text(json.dumps(data))
+        payload = json.dumps(data)
+        disconnected: list[WebSocket] = []
+
+        for connection in list(self.active_connections):
+            try:
+                await connection.send_text(payload)
+            except Exception:
+                disconnected.append(connection)
+
+        for connection in disconnected:
+            self.disconnect(connection)
 
 # Initialize a single global manager
 manager = ConnectionManager()
@@ -53,7 +60,7 @@ async def fetch_top_teams(db: AsyncSession, limit: int = 10):
         )
         .join(ProjectSubmission, ProjectSubmission.team_id == Team.id)
         .outerjoin(RubricEvaluation, RubricEvaluation.project_id == ProjectSubmission.id)
-        .where(Team.is_promoted_to_r2 == True)
+        .where(Team.is_promoted_to_r2.is_(True))
         .group_by(Team.id, ProjectSubmission.id)
         .having(func.count(func.distinct(RubricEvaluation.judge_id)) >= judge_count)
         .order_by(func.sum(RubricEvaluation.total_score).desc())
@@ -86,10 +93,8 @@ async def websocket_endpoint(websocket: WebSocket, db: AsyncSession = Depends(ge
         initial_board = await fetch_top_teams(db)
         await websocket.send_text(json.dumps({"type": "initial_load", "data": initial_board}))
         
-        # Keep connection open and listen for incoming messages (if any)
         while True:
-            data = await websocket.receive_text()
-            # In a leaderboard, clients usually just listen, but we need this loop to keep the socket alive
+            await websocket.receive_text()
     except WebSocketDisconnect:
         manager.disconnect(websocket)
 
@@ -99,7 +104,6 @@ async def trigger_live_update(
     db: AsyncSession = Depends(get_db),
     admin=Depends(get_current_admin)
 ):
-    # print(request.headers)
     current_board = await fetch_top_teams(db)
     
     # Tell the manager to push the new data to every connected WebSocket
@@ -110,10 +114,3 @@ async def trigger_live_update(
     
     return {"message": "Leaderboard broadcast successful"}
 
-async def broadcast(self, data: dict):
-        """Generic broadcast for Admin phase changes and alerts"""
-        for connection in self.active_connections:
-            try:
-                await connection.send_text(json.dumps(data))
-            except Exception:
-                pass
