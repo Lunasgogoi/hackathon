@@ -109,7 +109,7 @@ export default function ProjectBuilder({ onExit }) {
         asset_url: formData.assetUrl || null
       });
 
-      alert(`Success! ${response.data.message}`);
+      alert(response.data.message);
       onExit(true);
     } catch (error) {
       const message = formatApiError(error);

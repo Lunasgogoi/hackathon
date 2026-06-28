@@ -6,6 +6,7 @@ import Auth from './components/Auth';
 import HackathonHub, { TeamPage } from './components/HackathonHub';
 import ParticipantDashboard from './components/ParticipantDashboard';
 import ProjectBuilder from './components/ProjectBuilder';
+import Round1Status from './components/Round1Status';
 import JudgeDashboard from './components/JudgeDashboard';
 import LiveLeaderboard from './components/LiveLeaderboard';
 import AdminDashboard from './components/AdminDashboard';
@@ -45,6 +46,12 @@ const LoadingScreen = ({ label = 'Loading...' }) => (
   </div>
 );
 
+const getRoleHomePath = (role = getSessionRole()) => {
+  if (role === 'admin') return '/admin';
+  if (role === 'judge') return '/judge';
+  return '/hub';
+};
+
 const loadParticipantProgress = () => {
   return loadStoredParticipantProgress(DEFAULT_PARTICIPANT_PROGRESS);
 };
@@ -63,9 +70,7 @@ const ProtectedRoute = ({ children, allowedRoles }) => {
   if (!token) return <Navigate to="/auth" replace />;
   if (allowedRoles && !allowedRoles.includes(role)) {
     // If they have a token but the wrong role, send them to their native dashboard
-    if (role === 'admin') return <Navigate to="/admin" replace />;
-    if (role === 'judge') return <Navigate to="/judge" replace />;
-    return <Navigate to="/hub" replace />;
+    return <Navigate to={getRoleHomePath(role)} replace />;
   }
 
   return children;
@@ -86,7 +91,7 @@ const MainLayout = ({ children, onSignOut }) => {
     <div className="min-h-screen bg-gray-50">
       <nav className="bg-white border-b border-gray-200 px-8 py-4 flex justify-between items-center shadow-sm sticky top-0 z-50">
         <div className="flex items-center gap-4">
-          <h1 className="text-2xl font-black tracking-tight text-gray-900 cursor-pointer" onClick={() => navigate('/')}>
+          <h1 className="text-2xl font-black tracking-tight text-gray-900 cursor-pointer" onClick={() => navigate(getRoleHomePath(role))}>
             HACK<span className="text-blue-600">CORE</span>
           </h1>
           {role === 'participant' && (
@@ -272,6 +277,10 @@ function AppRoutes({
 
   return (
     <Routes>
+      <Route path="/" element={
+        getAccessToken() ? <Navigate to={getRoleHomePath()} replace /> : <Navigate to="/auth" replace />
+      } />
+
       {/* Public Route */}
       <Route path="/auth" element={<Auth onLoginSuccess={async (role) => {
         setAuthSessionVersion(prev => prev + 1);
@@ -287,28 +296,38 @@ function AppRoutes({
       <Route path="/leaderboard" element={<LiveLeaderboard onExit={() => navigate(-1)} />} />
       <Route path="/assessment" element={
         <ProtectedRoute allowedRoles={['participant']}>
-          <ParticipantDashboard onSubmitAssessment={async () => {
-            try {
-              const response = await apiClient.post('/assessment/submit');
-              setAssessmentStatus({
-                submitted: true,
-                qualified_for_round2: response.data.qualified_for_round2,
-                user_score: response.data.user_score,
-                team: {
-                  average_percent: response.data.team_average_percent
-                }
-              });
-              markParticipantProgress('round1');
-              alert(
-                response.data.qualified_for_round2
-                  ? `Assessment submitted. Team average ${response.data.team_average_percent}% meets the Round 2 cutoff.`
-                  : `Assessment submitted. Team average ${response.data.team_average_percent}% is below the Round 2 cutoff.`
-              );
-              navigate('/hub');
-            } catch (error) {
-              alert(error.response?.data?.detail || 'Could not submit assessment.');
-            }
-          }} />
+          {!assessmentStatusLoaded ? (
+            <LoadingScreen label="Checking assessment access..." />
+          ) : assessmentStatus.submitted ? (
+            <Navigate to="/assessment-status" replace />
+          ) : (
+            <ParticipantDashboard onSubmitAssessment={async () => {
+              try {
+                const response = await apiClient.post('/assessment/submit');
+                setAssessmentStatus({
+                  submitted: true,
+                  attempt_status: 'evaluated',
+                  qualified_for_round2: response.data.qualified_for_round2,
+                  cutoff_percent: response.data.cutoff_percent,
+                  user_score: response.data.user_score,
+                  team: {
+                    average_percent: response.data.team_average_percent
+                  }
+                });
+                markParticipantProgress('round1');
+                alert(
+                  response.data.qualified_for_round2
+                    ? `Assessment submitted. Team average ${response.data.team_average_percent}% meets the Round 2 cutoff.`
+                    : `Assessment submitted. Team average ${response.data.team_average_percent}% is below the Round 2 cutoff.`
+                );
+                navigate('/assessment-status', { replace: true });
+                return true;
+              } catch (error) {
+                alert(error.response?.data?.detail || 'Could not submit assessment.');
+                return false;
+              }
+            }} />
+          )}
         </ProtectedRoute>
       } />
 
@@ -339,6 +358,14 @@ function AppRoutes({
         <ProtectedRoute allowedRoles={['participant']}>
           <MainLayout onSignOut={handleSignOut}>
             <HackathonRules />
+          </MainLayout>
+        </ProtectedRoute>
+      } />
+
+      <Route path="/assessment-status" element={
+        <ProtectedRoute allowedRoles={['participant']}>
+          <MainLayout onSignOut={handleSignOut}>
+            <Round1Status onExit={() => navigate('/hub')} />
           </MainLayout>
         </ProtectedRoute>
       } />

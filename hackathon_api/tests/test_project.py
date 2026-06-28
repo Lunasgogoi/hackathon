@@ -56,7 +56,33 @@ async def test_promoted_team_can_submit_project_once(
     )
 
     assert response.status_code == 201
-    assert response.json()["message"] == "Project submitted successfully!"
+    assert response.json()["message"] == "Project submitted successfully. Your team is now under final review."
+
+
+async def test_promoted_team_member_cannot_submit_project(
+    client,
+    db_session,
+    set_phase,
+    create_user,
+    create_team,
+    auth_headers,
+):
+    await set_phase("round2", "active")
+    captain = await create_user(username="captain-submitter")
+    member = await create_user(username="member-submitter")
+    team = await create_team(name="Leader Submit Only", captain=captain, promoted=True)
+    member.team_id = team.id
+    await db_session.commit()
+    headers = await auth_headers("member-submitter")
+
+    response = await client.post(
+        "/api/v1/projects/submit",
+        headers=headers,
+        json=PROJECT_PAYLOAD,
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Only team leaders can submit the project."
 
 
 async def test_duplicate_project_submission_fails(

@@ -19,6 +19,38 @@ async def test_normal_admin_can_update_phase(client, create_user, auth_headers):
     assert response.json()["new_status"] == "active"
 
 
+async def test_admin_stats_are_calculated_from_database(
+    client,
+    create_user,
+    auth_headers,
+    create_team,
+    create_project,
+    create_evaluation,
+):
+    await create_user(username="stats-admin", role="admin")
+    judge_one = await create_user(username="judge-one", role="judge")
+    judge_two = await create_user(username="judge-two", role="judge")
+    await create_user(username="participant-one")
+    first_team = await create_team(name="Stats Team One")
+    second_team = await create_team(name="Stats Team Two")
+    first_project = await create_project(team=first_team, title="First Project")
+    second_project = await create_project(team=second_team, title="Second Project")
+    await create_evaluation(project=first_project, judge=judge_one)
+    await create_evaluation(project=second_project, judge=judge_one)
+    await create_evaluation(project=second_project, judge=judge_two)
+    headers = await auth_headers("stats-admin")
+
+    response = await client.get("/api/v1/admin/stats", headers=headers)
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "registered_teams": 2,
+        "active_users": 4,
+        "projects_submitted": 2,
+        "pending_evaluations": 1,
+    }
+
+
 async def test_master_admin_can_create_privileged_user(
     client,
     create_user,

@@ -10,6 +10,7 @@ export default function AdminDashboard() {
     });
     const [announcement, setAnnouncement] = useState('');
     const [adminProfile, setAdminProfile] = useState(null);
+    const [adminStats, setAdminStats] = useState(null);
     const [privilegedUser, setPrivilegedUser] = useState({
         username: '',
         email: '',
@@ -37,8 +38,18 @@ export default function AdminDashboard() {
             }
         };
 
+        const fetchAdminStats = async () => {
+            try {
+                const response = await apiClient.get('/admin/stats');
+                setAdminStats(response.data);
+            } catch (error) {
+                console.error('Failed to load admin stats.', error);
+            }
+        };
+
         fetchPhases();
         fetchAdminProfile();
+        fetchAdminStats();
     }, []);
 
     const handlePhaseChange = async (phase, newStatus) => {
@@ -95,17 +106,19 @@ export default function AdminDashboard() {
         }
     };
 
+    const stats = [
+        { label: 'Registered Teams', value: adminStats?.registered_teams, color: 'text-blue-600' },
+        { label: 'Active Users', value: adminStats?.active_users, color: 'text-green-600' },
+        { label: 'Projects Submitted', value: adminStats?.projects_submitted, color: 'text-purple-600' },
+        { label: 'Pending Evaluations', value: adminStats?.pending_evaluations, color: 'text-yellow-600' }
+    ];
+
     return (
         <div className="max-w-5xl mx-auto py-10 px-4 space-y-8">
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                {[
-                    { label: 'Registered Teams', value: '142', color: 'text-blue-600' },
-                    { label: 'Active Users', value: '38', color: 'text-green-600' },
-                    { label: 'Projects Submitted', value: '12', color: 'text-purple-600' },
-                    { label: 'Pending Evaluations', value: '5', color: 'text-yellow-600' }
-                ].map(stat => (
+                {stats.map(stat => (
                     <div key={stat.label} className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm text-center">
-                        <div className={`text-3xl font-black mb-1 ${stat.color}`}>{stat.value}</div>
+                        <div className={`text-3xl font-black mb-1 ${stat.color}`}>{stat.value ?? '...'}</div>
                         <div className="text-xs font-bold text-gray-500 uppercase tracking-wide">{stat.label}</div>
                     </div>
                 ))}

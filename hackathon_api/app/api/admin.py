@@ -1,5 +1,5 @@
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Depends, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.schemas.admin import BroadcastRequest, PhaseUpdateRequest, PrivilegedUserCreateRequest
@@ -9,6 +9,7 @@ from app.db.session import get_db
 from app.api.deps import get_current_admin, get_current_master_admin
 
 from app.core.security import get_password_hash
+from app.models.project import ProjectSubmission, RubricEvaluation
 from app.models.team import Team
 from app.models.user import RoleEnum, User
 from app.api.assessment import calculate_team_average, get_round1_assessment
@@ -29,6 +30,51 @@ async def get_admin_profile(
         "email": current_user.email,
         "role": current_user.role,
         "is_master_admin": current_user.is_master_admin,
+    }
+
+
+@router.get("/stats")
+async def get_admin_stats(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin),
+):
+    registered_teams = (await db.execute(select(func.count(Team.id)))).scalar_one()
+    active_users = (await db.execute(select(func.count(User.id)))).scalar_one()
+    projects_submitted = (
+        await db.execute(select(func.count(ProjectSubmission.id)))
+    ).scalar_one()
+    judge_count = (
+        await db.execute(select(func.count(User.id)).where(User.role == RoleEnum.judge))
+    ).scalar_one()
+
+    if judge_count == 0:
+        pending_evaluations = projects_submitted
+    else:
+        evaluation_counts = (
+            select(
+                ProjectSubmission.id.label("project_id"),
+                func.count(func.distinct(RubricEvaluation.judge_id)).label("judge_evaluations"),
+            )
+            .outerjoin(
+                RubricEvaluation,
+                RubricEvaluation.project_id == ProjectSubmission.id,
+            )
+            .group_by(ProjectSubmission.id)
+            .subquery()
+        )
+        pending_evaluations = (
+            await db.execute(
+                select(func.count())
+                .select_from(evaluation_counts)
+                .where(evaluation_counts.c.judge_evaluations < judge_count)
+            )
+        ).scalar_one()
+
+    return {
+        "registered_teams": registered_teams,
+        "active_users": active_users,
+        "projects_submitted": projects_submitted,
+        "pending_evaluations": pending_evaluations,
     }
 
 

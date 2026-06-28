@@ -6,6 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import ensure_phase_active, get_current_user, get_db
+from app.models.project import ProjectSubmission
 from app.models.team import Team
 from app.models.user import RoleEnum, User
 from app.schemas.team import TeamCreate, TeamJoin, UserProfileUpdate
@@ -44,12 +45,28 @@ async def ensure_team_invite_code(db: AsyncSession, team: Team) -> None:
     await db.refresh(team)
 
 
+async def ensure_team_captain(db: AsyncSession, team: Team, members: list[User]) -> int | None:
+    if team.captain_id:
+        return team.captain_id
+    if not members:
+        return None
+
+    team.captain_id = members[0].id
+    await db.commit()
+    await db.refresh(team)
+    return team.captain_id
+
+
 async def serialize_team(db: AsyncSession, team: Team) -> dict:
     await ensure_team_invite_code(db, team)
 
     members = list((await db.execute(
         select(User).where(User.team_id == team.id).order_by(User.id)
     )).scalars().all())
+    captain_id = await ensure_team_captain(db, team, members)
+    has_project_submission = (await db.execute(
+        select(ProjectSubmission.id).where(ProjectSubmission.team_id == team.id)
+    )).scalar_one_or_none() is not None
 
     return {
         "id": team.id,
@@ -59,8 +76,9 @@ async def serialize_team(db: AsyncSession, team: Team) -> dict:
         "max_members": team.max_members,
         "member_count": len(members),
         "is_promoted_to_r2": team.is_promoted_to_r2,
-        "captain_id": team.captain_id,
-        "members": [serialize_member(member, team.captain_id) for member in members],
+        "captain_id": captain_id,
+        "has_project_submission": has_project_submission,
+        "members": [serialize_member(member, captain_id) for member in members],
     }
 
 
@@ -77,13 +95,15 @@ async def get_my_team(
     ensure_participant(current_user)
 
     team_payload = None
+    captain_id = None
     if current_user.team_id:
         team = (await db.execute(select(Team).where(Team.id == current_user.team_id))).scalar_one_or_none()
         if team:
             team_payload = await serialize_team(db, team)
+            captain_id = team_payload["captain_id"]
 
     return {
-        "current_user": serialize_member(current_user, None),
+        "current_user": serialize_member(current_user, captain_id),
         "team": team_payload,
     }
 
@@ -171,13 +191,15 @@ async def update_team_profile(
     await db.commit()
 
     team_payload = None
+    captain_id = None
     if current_user.team_id:
         team = (await db.execute(select(Team).where(Team.id == current_user.team_id))).scalar_one_or_none()
         if team:
             team_payload = await serialize_team(db, team)
+            captain_id = team_payload["captain_id"]
 
     return {
         "message": "Profile updated.",
-        "current_user": serialize_member(current_user, None),
+        "current_user": serialize_member(current_user, captain_id),
         "team": team_payload,
     }

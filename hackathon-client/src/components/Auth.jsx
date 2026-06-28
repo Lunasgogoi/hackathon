@@ -1,15 +1,42 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { apiClient } from '../api/client';
 import { setAuthSession } from '../api/session';
+
+const getRegistrationMessage = (status) => {
+  if (status === 'locked') return 'Registration is not open yet.';
+  if (status === 'completed') return 'Registration is closed.';
+  return 'Registration is currently unavailable.';
+};
 
 export default function Auth({ onLoginSuccess }) {
   const [isLogin, setIsLogin] = useState(true);
   const [error, setError] = useState('');
+  const [registrationStatus, setRegistrationStatus] = useState('active');
 
   // Form State
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const isRegistrationOpen = registrationStatus === 'active';
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadPhases = async () => {
+      try {
+        const response = await apiClient.get('/system/phases');
+        if (isMounted) setRegistrationStatus(response.data.registration || 'locked');
+      } catch {
+        if (isMounted) setRegistrationStatus('locked');
+      }
+    };
+
+    loadPhases();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -37,6 +64,11 @@ export default function Auth({ onLoginSuccess }) {
         onLoginSuccess(response.data.role);
 
       } else {
+        if (!isRegistrationOpen) {
+          setError(getRegistrationMessage(registrationStatus));
+          return;
+        }
+
         // --- REAL FASTAPI REGISTRATION ---
         await apiClient.post('/auth/register', {
           username,
@@ -67,6 +99,11 @@ export default function Auth({ onLoginSuccess }) {
           {error && (
             <div className={`text-sm text-center p-3 rounded-md ${error.includes('successful') ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
               {error}
+            </div>
+          )}
+          {!isLogin && !isRegistrationOpen && (
+            <div className="rounded-md bg-amber-50 p-3 text-center text-sm font-semibold text-amber-700">
+              {getRegistrationMessage(registrationStatus)}
             </div>
           )}
 
@@ -103,7 +140,8 @@ export default function Auth({ onLoginSuccess }) {
 
           <button
             type="submit"
-            className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors"
+            disabled={!isLogin && !isRegistrationOpen}
+            className="group relative flex w-full justify-center rounded-md border border-transparent bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-500"
           >
             {isLogin ? 'Sign In' : 'Register'}
           </button>

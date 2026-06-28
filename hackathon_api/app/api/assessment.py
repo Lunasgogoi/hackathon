@@ -152,6 +152,49 @@ async def calculate_user_assessment_score(db: AsyncSession, user_id: int, assess
     }
 
 
+async def get_user_assessment_breakdown(db: AsyncSession, user_id: int, assessment_id: int) -> dict:
+    coding_problem_ids = list((await db.execute(
+        select(CodingProblem.id).where(CodingProblem.assessment_id == assessment_id)
+    )).scalars().all())
+    mcq_question_ids = list((await db.execute(
+        select(MCQQuestion.id).where(MCQQuestion.assessment_id == assessment_id)
+    )).scalars().all())
+
+    coding_submission_rows = []
+    if coding_problem_ids:
+        coding_submission_rows = (await db.execute(
+            select(CodingSubmission.problem_id, CodingSubmission.status).where(
+                CodingSubmission.user_id == user_id,
+                CodingSubmission.problem_id.in_(coding_problem_ids),
+            )
+        )).all()
+
+    accepted_coding_problem_ids = {
+        problem_id
+        for problem_id, status in coding_submission_rows
+        if status == SubmissionStatus.accepted
+    }
+
+    answered_mcq_rows = []
+    if mcq_question_ids:
+        answered_mcq_rows = (await db.execute(
+            select(MCQSubmission.question_id, MCQSubmission.is_correct).where(
+                MCQSubmission.user_id == user_id,
+                MCQSubmission.question_id.in_(mcq_question_ids),
+            )
+        )).all()
+
+    return {
+        "total_questions": len(coding_problem_ids) + len(mcq_question_ids),
+        "coding_questions": len(coding_problem_ids),
+        "accepted_coding_questions": len(accepted_coding_problem_ids),
+        "coding_submissions": len(coding_submission_rows),
+        "mcq_questions": len(mcq_question_ids),
+        "answered_mcq_questions": len({question_id for question_id, _ in answered_mcq_rows}),
+        "correct_mcq_answers": sum(1 for _, is_correct in answered_mcq_rows if is_correct),
+    }
+
+
 async def calculate_team_average(db: AsyncSession, team_id: int, assessment_id: int) -> dict:
     members = list((await db.execute(
         select(User).where(User.team_id == team_id, User.role == RoleEnum.participant)
@@ -189,6 +232,19 @@ async def get_round1_assessment(db: AsyncSession) -> Assessment:
     return assessment
 
 
+async def ensure_assessment_can_be_opened(
+    db: AsyncSession,
+    user_id: int,
+    assessment_id: int,
+) -> None:
+    attempt = await get_assessment_attempt(db, user_id, assessment_id)
+    if attempt and attempt.status in FINAL_ATTEMPT_STATUSES:
+        raise HTTPException(
+            status_code=403,
+            detail="Your Round 1 submission is final. View your Round 1 status instead.",
+        )
+
+
 @router.get("/current")
 async def get_current_assessment(
     db: AsyncSession = Depends(get_db),
@@ -199,6 +255,7 @@ async def get_current_assessment(
     await ensure_phase_active(db, "round1", "Round 1 assessment is not active.")
 
     assessment = await get_round1_assessment(db)
+    await ensure_assessment_can_be_opened(db, current_user.id, assessment.id)
 
     coding_problems = (await db.execute(
         select(CodingProblem).where(CodingProblem.assessment_id == assessment.id).order_by(CodingProblem.id)
@@ -293,6 +350,7 @@ async def get_assessment_status(
     attempt = await get_assessment_attempt(db, current_user.id, assessment.id)
     is_submitted = bool(attempt and attempt.status in FINAL_ATTEMPT_STATUSES)
     user_score = serialize_attempt_score(attempt) if is_submitted else None
+    breakdown = await get_user_assessment_breakdown(db, current_user.id, assessment.id)
 
     team = None
     team_summary = None
@@ -306,6 +364,7 @@ async def get_assessment_status(
         "qualified_for_round2": bool(team and team.is_promoted_to_r2),
         "cutoff_percent": DEFAULT_ROUND2_CUTOFF_PERCENT,
         "user_score": user_score,
+        "breakdown": breakdown,
         "team": {
             "id": team.id,
             "name": team.name,

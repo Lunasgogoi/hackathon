@@ -94,6 +94,7 @@ const formatApiError = (error) => {
 
 export default function ParticipantDashboard({ onSubmitAssessment }) {
   const editorRef = useRef(null);
+  const hasSubmittedRef = useRef(false);
   const [assessment, setAssessment] = useState(null);
   const [questions, setQuestions] = useState([]);
   const [isLoadingAssessment, setIsLoadingAssessment] = useState(true);
@@ -111,6 +112,7 @@ export default function ParticipantDashboard({ onSubmitAssessment }) {
   const [isSubmittingMCQ, setIsSubmittingMCQ] = useState(false);
   const [visitedQuestions, setVisitedQuestions] = useState({});
   const [answeredQuestions, setAnsweredQuestions] = useState({});
+  const [attemptLockEnabled, setAttemptLockEnabled] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -129,6 +131,7 @@ export default function ParticipantDashboard({ onSubmitAssessment }) {
         setAssessment(response.data);
         setQuestions(loadedQuestions);
         setActiveQuestionId(firstQuestion?.id || null);
+        setAttemptLockEnabled(Boolean(firstQuestion));
         setVisitedQuestions(firstQuestion ? { [firstQuestion.id]: true } : {});
         setAnsweredQuestions(
           loadedQuestions.reduce((answered, question) => {
@@ -147,6 +150,7 @@ export default function ParticipantDashboard({ onSubmitAssessment }) {
         setCodeByQuestion(getInitialCode(loadedQuestions, DEFAULT_LANGUAGE));
       } catch (error) {
         if (!isMounted) return;
+        setAttemptLockEnabled(false);
         setAssessmentError(error.response?.data?.detail || 'Could not load the assessment.');
       } finally {
         if (isMounted) setIsLoadingAssessment(false);
@@ -159,6 +163,33 @@ export default function ParticipantDashboard({ onSubmitAssessment }) {
       isMounted = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!attemptLockEnabled) return undefined;
+
+    const handleBeforeUnload = (event) => {
+      if (hasSubmittedRef.current) return;
+
+      event.preventDefault();
+      event.returnValue = '';
+    };
+
+    const handlePopState = () => {
+      if (hasSubmittedRef.current) return;
+
+      window.history.pushState({ assessmentLocked: true }, '', window.location.href);
+      window.alert('Round 1 is in progress. Submit the assessment before leaving this page.');
+    };
+
+    window.history.pushState({ assessmentLocked: true }, '', window.location.href);
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    window.addEventListener('popstate', handlePopState);
+
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      window.removeEventListener('popstate', handlePopState);
+    };
+  }, [attemptLockEnabled]);
 
   const activeProblem = questions.find(question => question.id === activeQuestionId);
   const selectedOption = selectedOptionsByQuestion[activeQuestionId] || '';
@@ -433,7 +464,10 @@ export default function ParticipantDashboard({ onSubmitAssessment }) {
           <button
             onClick={async () => {
               if (window.confirm('Are you sure you want to submit your final assessment?')) {
-                await onSubmitAssessment();
+                const submitted = await onSubmitAssessment();
+                if (submitted !== false) {
+                  hasSubmittedRef.current = true;
+                }
               }
             }}
             className="h-10 rounded-md bg-emerald-500 px-5 text-sm font-bold text-white hover:bg-emerald-400"

@@ -37,6 +37,22 @@ async def test_register_fails_when_registration_is_locked(client, set_phase):
     assert response.json()["detail"] == "Registration is currently closed."
 
 
+async def test_register_fails_when_registration_is_completed(client, set_phase):
+    await set_phase("registration", "completed")
+
+    response = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "username": "closed",
+            "email": "closed@example.com",
+            "password": "Password123!",
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Registration is currently closed."
+
+
 async def test_register_rejects_duplicate_username_or_email(client, set_phase, create_user, monkeypatch):
     await set_phase("registration", "active")
     await create_user(username="taken", email="taken@example.com")

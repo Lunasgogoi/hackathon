@@ -135,6 +135,8 @@ async def test_assessment_submit_calculates_score_and_locks_later_edits(
     )
 
     response = await client.post("/api/v1/assessment/submit", headers=headers)
+    status_response = await client.get("/api/v1/assessment/status", headers=headers)
+    reopen_response = await client.get("/api/v1/assessment/current", headers=headers)
     edit_response = await client.post(
         "/api/v1/mcq/submit",
         headers=headers,
@@ -145,6 +147,14 @@ async def test_assessment_submit_calculates_score_and_locks_later_edits(
     payload = response.json()
     assert payload["user_score"]["total_score"] == 60
     assert payload["team_average_percent"] == 100
+    assert status_response.status_code == 200
+    status_payload = status_response.json()
+    assert status_payload["submitted"] is True
+    assert status_payload["breakdown"]["accepted_coding_questions"] == 1
+    assert status_payload["breakdown"]["answered_mcq_questions"] == 1
+    assert status_payload["breakdown"]["correct_mcq_answers"] == 1
+    assert reopen_response.status_code == 403
+    assert reopen_response.json()["detail"] == "Your Round 1 submission is final. View your Round 1 status instead."
     assert edit_response.status_code == 400
     assert edit_response.json()["detail"] == "This assessment has already been submitted and cannot be changed."
 

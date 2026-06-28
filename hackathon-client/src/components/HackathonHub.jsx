@@ -64,7 +64,14 @@ const getParticipantStatuses = (stages, progress, round2Eligible) => {
   };
 };
 
-const getHackathonAccess = (stages, participantStatuses, hasTeam, round2Eligible) => {
+const getHackathonAccess = (
+  stages,
+  participantStatuses,
+  hasTeam,
+  round2Eligible,
+  isTeamLeader,
+  hasProjectSubmission
+) => {
   if (!hasTeam) {
     return {
       status: 'Team Required',
@@ -100,6 +107,28 @@ const getHackathonAccess = (stages, participantStatuses, hasTeam, round2Eligible
 
   if (stages.round2 === 'active') {
     if (round2Eligible && participantStatuses.round2 === 'active') {
+      if (hasProjectSubmission) {
+        return {
+          status: 'Submitted',
+          label: 'Project Submitted',
+          helper: 'Project submitted successfully. Your team is now under final review.',
+          action: null,
+          disabled: true,
+          buttonClass: 'bg-gray-100 text-gray-400'
+        };
+      }
+
+      if (!isTeamLeader) {
+        return {
+          status: 'Team Leader Required',
+          label: 'Only Team Leaders Can Submit',
+          helper: 'Only team leaders can submit the project for the team.',
+          action: null,
+          disabled: true,
+          buttonClass: 'bg-gray-100 text-gray-400'
+        };
+      }
+
       return {
         status: 'Started',
         label: 'Enter Build Phase',
@@ -120,13 +149,22 @@ const getHackathonAccess = (stages, participantStatuses, hasTeam, round2Eligible
     };
   }
 
+  if (participantStatuses.round1 === 'completed') {
+    return {
+      status: 'Submitted',
+      label: 'View Round 1 Status',
+      helper: 'Your Round 1 submission is recorded. View your score, team average, and Round 2 qualification status.',
+      action: 'assessment-status',
+      disabled: false,
+      buttonClass: 'bg-blue-600 text-white hover:bg-blue-700'
+    };
+  }
+
   if (stages.round1 === 'active') {
     return {
       status: 'Started',
-      label: participantStatuses.round1 === 'completed' ? 'View Round 1' : 'Enter Round 1',
-      helper: participantStatuses.round1 === 'completed'
-        ? 'Your Round 1 submission is recorded. You can still enter the hackathon view.'
-        : 'Round 1 is live for registered team members.',
+      label: 'Enter Round 1',
+      helper: 'Round 1 is live for registered team members.',
       action: 'assessment',
       disabled: false,
       buttonClass: 'bg-blue-600 text-white hover:bg-blue-700'
@@ -176,7 +214,7 @@ function MemberAvatar({ member, size = 'md' }) {
   );
 }
 
-function TeamPanel({ teamPayload, setTeamPayload }) {
+function TeamPanel({ teamPayload, setTeamPayload, registrationStatus = 'active' }) {
   const [mode, setMode] = useState('create');
   const [teamForm, setTeamForm] = useState({ name: '', description: '', maxMembers: 4 });
   const [joinCode, setJoinCode] = useState('');
@@ -192,6 +230,10 @@ function TeamPanel({ teamPayload, setTeamPayload }) {
 
   const currentUser = teamPayload?.current_user;
   const team = teamPayload?.team;
+  const canModifyTeam = registrationStatus === 'active';
+  const registrationUnavailableMessage = registrationStatus === 'completed'
+    ? 'Team registration is closed.'
+    : 'Team registration is not open yet.';
 
   const loadTeam = async () => {
     const response = await apiClient.get('/teams/me');
@@ -329,7 +371,9 @@ function TeamPanel({ teamPayload, setTeamPayload }) {
         <div className="flex items-start gap-4">
           <MemberAvatar member={currentUser} size="lg" />
           <div className="min-w-0 flex-1">
-            <div className="text-xs font-bold uppercase text-gray-400">Participant</div>
+            <div className={`text-xs font-bold uppercase ${currentUser?.is_captain ? 'text-emerald-600' : 'text-gray-400'}`}>
+              {currentUser?.is_captain ? 'Team Leader' : 'Participant'}
+            </div>
             <h2 className="truncate text-xl font-black text-gray-900">{currentUser?.username || 'Profile'}</h2>
             <p className="truncate text-sm text-gray-500">{currentUser?.email}</p>
           </div>
@@ -371,7 +415,14 @@ function TeamPanel({ teamPayload, setTeamPayload }) {
         </form>
       </div>
 
-      {!team ? (
+      {!team && !canModifyTeam ? (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-6 shadow-sm">
+          <h3 className="text-lg font-black text-amber-900">Team Registration Unavailable</h3>
+          <p className="mt-2 text-sm font-semibold text-amber-700">
+            {registrationUnavailableMessage} You can sign in, but teams can only be created or joined while registration is open.
+          </p>
+        </div>
+      ) : !team ? (
         <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
           <div className="mb-5 flex rounded-md border border-gray-200 bg-gray-50 p-1">
             <button
@@ -479,7 +530,9 @@ function TeamPanel({ teamPayload, setTeamPayload }) {
                   <div className="flex flex-wrap items-center gap-2">
                     <div className="truncate text-sm font-black text-gray-900">{member.username}</div>
                     {member.is_captain && (
-                      <span className="rounded bg-amber-100 px-2 py-0.5 text-[10px] font-black uppercase text-amber-700">Captain</span>
+                      <span className="rounded bg-emerald-100 px-2 py-0.5 text-[10px] font-black uppercase text-emerald-700">
+                        Team Leader
+                      </span>
                     )}
                   </div>
                   <p className="truncate text-xs text-gray-500">{member.skills || member.email}</p>
@@ -585,6 +638,7 @@ function TeamAccessCard({
 export function TeamPage() {
   const [teamPayload, setTeamPayload] = useState(null);
   const [teamError, setTeamError] = useState('');
+  const [registrationStatus, setRegistrationStatus] = useState('locked');
 
   useEffect(() => {
     let isMounted = true;
@@ -597,8 +651,17 @@ export function TeamPage() {
         if (isMounted) setTeamError(formatApiError(error, 'Could not load team details.'));
       }
     };
+    const loadPhases = async () => {
+      try {
+        const response = await apiClient.get('/system/phases');
+        if (isMounted) setRegistrationStatus(response.data.registration || 'locked');
+      } catch {
+        if (isMounted) setRegistrationStatus('locked');
+      }
+    };
 
     loadTeam();
+    loadPhases();
 
     return () => {
       isMounted = false;
@@ -612,7 +675,11 @@ export function TeamPage() {
         <h1 className="text-3xl font-black tracking-tight text-gray-900">Manage Team</h1>
       </div>
       {teamPayload ? (
-        <TeamPanel teamPayload={teamPayload} setTeamPayload={setTeamPayload} />
+        <TeamPanel
+          teamPayload={teamPayload}
+          setTeamPayload={setTeamPayload}
+          registrationStatus={registrationStatus}
+        />
       ) : (
         <div className="rounded-xl border border-gray-200 bg-white p-6 text-sm font-semibold text-gray-500 shadow-sm">
           {teamError || 'Loading team setup...'}
@@ -649,18 +716,44 @@ export default function HackathonHub({ stages, progress, round2Eligible, onLaunc
     };
   }, []);
 
-  const registrationStatus = participantStatuses.registration;
+  const hasTeam = Boolean(teamPayload?.team);
+  const registrationStatus = hasTeam ? 'completed' : stages.registration || 'locked';
   const round1Status = participantStatuses.round1;
   const round2Status = participantStatuses.round2;
   const finaleStatus = participantStatuses.finale;
-  const hasTeam = Boolean(teamPayload?.team);
+  const isTeamLeader = Boolean(teamPayload?.team && teamPayload?.current_user?.id === teamPayload.team.captain_id);
+  const hasProjectSubmission = Boolean(teamPayload?.team?.has_project_submission);
   const isRound2Live = stages.round2 === 'active';
-  const canOpenRound2 = isRound2Live && round2Status === 'active' && round2Eligible;
-  const accessDetails = getHackathonAccess(stages, participantStatuses, hasTeam, round2Eligible);
+  const canOpenRound2 = isRound2Live && round2Status === 'active' && round2Eligible && isTeamLeader && !hasProjectSubmission;
+  const round2ButtonLabel = (() => {
+    if (canOpenRound2) return 'Open Project Builder';
+    if (hasProjectSubmission) return 'Project Submitted';
+    if (round2Eligible && hasTeam && !isTeamLeader) return 'Only Team Leaders Can Submit';
+    return 'Round 1 Qualification Required';
+  })();
+  const round2BadgeLabel = (() => {
+    if (hasProjectSubmission) return 'Submitted';
+    if (isRound2Live && round2Eligible && hasTeam && !isTeamLeader) return 'Leader Only';
+    if (isRound2Live && !canOpenRound2) return 'Qualified Teams Only';
+    return PHASE_LABELS[round2Status];
+  })();
+  const round2HelperText = (() => {
+    if (hasProjectSubmission) return 'Project submitted successfully. Your team is now under final review.';
+    if (round2Eligible && hasTeam && !isTeamLeader) return 'Only team leaders can submit the project for the team.';
+    return 'Promoted teams will submit their GitHub repository, tech stack details, and presentation assets.';
+  })();
+  const accessDetails = getHackathonAccess(
+    stages,
+    participantStatuses,
+    hasTeam,
+    round2Eligible,
+    isTeamLeader,
+    hasProjectSubmission
+  );
 
   const registrationClasses = getPhaseClasses(registrationStatus);
   const round1Classes = getPhaseClasses(round1Status);
-  const round2Classes = getPhaseClasses(round2Status);
+  const round2Classes = getPhaseClasses(hasProjectSubmission ? 'completed' : round2Status);
   const finaleClasses = getPhaseClasses(finaleStatus, 'purple');
 
   const handleAccess = (overrideAction) => {
@@ -668,6 +761,7 @@ export default function HackathonHub({ stages, progress, round2Eligible, onLaunc
 
     if (action === 'team') navigate('/team');
     if (action === 'assessment') onLaunchOA();
+    if (action === 'assessment-status') navigate('/assessment-status');
     if (action === 'project') onLaunchProject();
     if (action === 'leaderboard') navigate('/leaderboard');
   };
@@ -761,11 +855,11 @@ export default function HackathonHub({ stages, progress, round2Eligible, onLaunc
             <p className="mb-6 mt-3 text-sm text-gray-600">Complete the algorithmic coding challenges and multiple-choice questions within the time limit.</p>
             {round1Status === 'active' ? (
               <button
-                onClick={onLaunchOA}
+                onClick={round1Status === 'completed' ? () => navigate('/assessment-status') : onLaunchOA}
                 disabled={!hasTeam}
                 className="w-full rounded-lg bg-blue-600 px-6 py-2 font-medium text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400 sm:w-auto"
               >
-                {hasTeam ? 'Launch Assessment' : 'Create or Join Team First'}
+                {hasTeam ? (round1Status === 'completed' ? 'View Round 1 Status' : 'Launch Assessment') : 'Create or Join Team First'}
               </button>
             ) : (
               <button disabled className="w-full cursor-not-allowed rounded-lg bg-gray-100 px-6 py-2 font-medium text-gray-400 sm:w-auto">
@@ -784,17 +878,21 @@ export default function HackathonHub({ stages, progress, round2Eligible, onLaunc
             <div className="mb-2 flex items-start justify-between gap-4">
               <h3 className="text-lg font-bold text-gray-900">Round 2: Virtual Build Phase</h3>
               <span className={`rounded-full px-3 py-1 text-xs font-semibold ${round2Classes.badge} ${round2Status === 'active' ? 'animate-pulse' : ''}`}>
-                {isRound2Live && !canOpenRound2 ? 'Qualified Teams Only' : PHASE_LABELS[round2Status]}
+                {round2BadgeLabel}
               </span>
             </div>
-            <p className="mb-4 text-sm text-gray-600">Promoted teams will submit their GitHub repository, tech stack details, and presentation assets.</p>
+            <p className="mb-4 text-sm text-gray-600">{round2HelperText}</p>
             {isRound2Live ? (
               <button
                 onClick={canOpenRound2 ? onLaunchProject : undefined}
                 disabled={!canOpenRound2}
-                className="w-full rounded-lg bg-blue-600 px-6 py-2 font-medium text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400 sm:w-auto"
+                className={`w-full rounded-lg px-6 py-2 font-medium shadow-sm transition disabled:cursor-not-allowed sm:w-auto ${
+                  hasProjectSubmission
+                    ? 'bg-green-100 text-green-700'
+                    : 'bg-blue-600 text-white hover:bg-blue-700 disabled:bg-gray-100 disabled:text-gray-400'
+                }`}
               >
-                {canOpenRound2 ? 'Open Project Builder' : 'Round 1 Qualification Required'}
+                {round2ButtonLabel}
               </button>
             ) : (
               <button disabled className="w-full cursor-not-allowed rounded-lg bg-gray-100 px-6 py-2 font-medium text-gray-400 sm:w-auto">

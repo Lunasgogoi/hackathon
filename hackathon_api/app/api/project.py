@@ -33,9 +33,17 @@ async def submit_project(
     # 2. Enforce the State Machine: Were they promoted?
     team_result = await db.execute(select(Team).where(Team.id == current_user.team_id))
     team = team_result.scalar_one()
+    if not team.captain_id:
+        first_member = (await db.execute(
+            select(User).where(User.team_id == team.id, User.role == RoleEnum.participant).order_by(User.id)
+        )).scalars().first()
+        if first_member:
+            team.captain_id = first_member.id
     
     if not team.is_promoted_to_r2:
         raise HTTPException(status_code=403, detail="Your team did not qualify for Round 2.")
+    if team.captain_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Only team leaders can submit the project.")
 
     # 3. Prevent duplicate submissions
     existing_proj = await db.execute(select(ProjectSubmission).where(ProjectSubmission.team_id == team.id))
@@ -67,7 +75,7 @@ async def submit_project(
             new_project.title,
         )
 
-    return {"message": "Project submitted successfully!"}
+    return {"message": "Project submitted successfully. Your team is now under final review."}
 
 @router.get("/pending")
 async def get_pending_projects(
