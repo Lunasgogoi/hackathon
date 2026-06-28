@@ -1,7 +1,7 @@
 # app/models/user.py
 import enum
 from typing import Optional
-from sqlalchemy import String, ForeignKey
+from sqlalchemy import Boolean, String, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
 from pydantic import BaseModel 
@@ -24,6 +24,7 @@ class User(Base):
     
     # Assign the enum to the column, defaulting to participant
     role: Mapped[RoleEnum] = mapped_column(default=RoleEnum.participant)
+    is_master_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     
     # A user can be part of ONE team (or no team yet)
     team_id: Mapped[Optional[int]] = mapped_column(ForeignKey("teams.id", ondelete="SET NULL"), nullable=True)

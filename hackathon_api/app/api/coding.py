@@ -9,16 +9,14 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 
+from app.core.config import settings
 from app.models.user import User, RoleEnum
 from app.models.coding import CodingSubmission, CodingProblem, TestCase, SubmissionStatus
 from app.schemas.coding import CodeSubmitRequest
-from app.api.deps import get_db, get_current_user
+from app.api.deps import ensure_phase_active, get_db, get_current_user
 from app.api.assessment import ensure_assessment_attempt_is_editable
 
 router = APIRouter(prefix="/coding", tags=["Coding Round"])
-
-# Piston Public API (Rate limited, but great for dev. Self-host for prod!)
-PISTON_URL = "https://emkc.org/api/v2/piston/execute"
 
 # Map frontend IDs to Piston language identifiers
 LANGUAGE_MAP = {
@@ -122,6 +120,42 @@ async def run_code_locally(lang_config: dict, source_code: str, stdin: str, time
 
     return {"compile": {"code": 1, "output": "Unsupported local language."}, "run": {}}
 
+
+async def execute_code(lang_config: dict, source_code: str, stdin: str, timeout_seconds: float) -> dict:
+    if settings.USE_PISTON_CODE_RUNNER:
+        payload = {
+            "language": lang_config["language"],
+            "version": lang_config["version"],
+            "files": [{"content": source_code}],
+            "stdin": stdin,
+            "compile_timeout": 10000,
+            "run_timeout": int(timeout_seconds * 1000),
+        }
+
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(settings.PISTON_EXECUTE_URL, json=payload, timeout=15.0)
+                response.raise_for_status()
+                return response.json()
+        except httpx.HTTPError:
+            pass
+
+    try:
+        return await run_code_locally(
+            lang_config,
+            source_code,
+            stdin,
+            timeout_seconds,
+        )
+    except Exception as exc:
+        return {
+            "compile": {
+                "code": 1,
+                "output": f"Local execution failed: {exc}",
+            },
+            "run": {},
+        }
+
 @router.post("/submit")
 async def submit_code(
     request: CodeSubmitRequest,
@@ -130,6 +164,7 @@ async def submit_code(
 ):
     if current_user.role != RoleEnum.participant:
         raise HTTPException(status_code=403, detail="Only participants can submit code.")
+    await ensure_phase_active(db, "round1", "Code submissions are only allowed while Round 1 is active.")
 
     # 1. Verify problem & fetch test cases
     problem = (await db.execute(select(CodingProblem).where(CodingProblem.id == request.problem_id))).scalar_one_or_none()
@@ -163,71 +198,47 @@ async def submit_code(
 
     # 4. Execute every configured test case.
     case_results = []
-    async with httpx.AsyncClient() as client:
-        for test_case in test_cases:
-            payload = {
-                "language": lang_config["language"],
-                "version": lang_config["version"],
-                "files": [{"content": request.source_code}],
-                "stdin": test_case.stdin,
-                "compile_timeout": 10000,
-                "run_timeout": int(problem.time_limit_seconds * 1000),
-            }
+    for test_case in test_cases:
+        result = await execute_code(
+            lang_config,
+            request.source_code,
+            test_case.stdin,
+            problem.time_limit_seconds,
+        )
 
-            try:
-                response = await client.post(PISTON_URL, json=payload, timeout=15.0)
-                response.raise_for_status()
-                result = response.json()
-            except httpx.HTTPError:
-                try:
-                    result = await run_code_locally(
-                        lang_config,
-                        request.source_code,
-                        test_case.stdin,
-                        problem.time_limit_seconds,
-                    )
-                except Exception as exc:
-                    result = {
-                        "compile": {
-                            "code": 1,
-                            "output": f"Local execution failed: {exc}",
-                        },
-                        "run": {},
-                    }
+        compile_result = result.get("compile", {})
+        run_result = result.get("run", {})
+        expected_output = test_case.expected_stdout.strip()
 
-            compile_result = result.get("compile", {})
-            run_result = result.get("run", {})
-            expected_output = test_case.expected_stdout.strip()
+        if compile_result.get("code") != 0 and compile_result.get("code") is not None:
+            case_status = SubmissionStatus.error
+            actual_output = compile_result.get("output", "Compilation Error")
+        elif run_result.get("code") == 124:
+            case_status = SubmissionStatus.time_limit
+            actual_output = run_result.get("output", "Time limit exceeded")
+        elif run_result.get("code") != 0:
+            case_status = SubmissionStatus.error
+            actual_output = run_result.get("output", "Runtime Error")
+        else:
+            actual_output = run_result.get("stdout", "").strip()
+            case_status = (
+                SubmissionStatus.accepted
+                if output_matches(actual_output, expected_output)
+                else SubmissionStatus.wrong_answer
+            )
 
-            if compile_result.get("code") != 0 and compile_result.get("code") is not None:
-                case_status = SubmissionStatus.error
-                actual_output = compile_result.get("output", "Compilation Error")
-            elif run_result.get("code") == 124:
-                case_status = SubmissionStatus.time_limit
-                actual_output = run_result.get("output", "Time limit exceeded")
-            elif run_result.get("code") != 0:
-                case_status = SubmissionStatus.error
-                actual_output = run_result.get("output", "Runtime Error")
-            else:
-                actual_output = run_result.get("stdout", "").strip()
-                case_status = (
-                    SubmissionStatus.accepted
-                    if output_matches(actual_output, expected_output)
-                    else SubmissionStatus.wrong_answer
-                )
+        case_results.append({
+            "id": test_case.id,
+            "hidden": test_case.is_hidden,
+            "passed": case_status == SubmissionStatus.accepted,
+            "status": case_status,
+            "input": test_case.stdin,
+            "expected": test_case.expected_stdout,
+            "output": actual_output,
+        })
 
-            case_results.append({
-                "id": test_case.id,
-                "hidden": test_case.is_hidden,
-                "passed": case_status == SubmissionStatus.accepted,
-                "status": case_status,
-                "input": test_case.stdin,
-                "expected": test_case.expected_stdout,
-                "output": actual_output,
-            })
-
-            if case_status in {SubmissionStatus.error, SubmissionStatus.time_limit}:
-                break
+        if case_status in {SubmissionStatus.error, SubmissionStatus.time_limit}:
+            break
 
     failed_result = next((case for case in case_results if not case["passed"]), None)
     if failed_result:

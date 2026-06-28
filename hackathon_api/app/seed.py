@@ -1,11 +1,14 @@
 import asyncio
 import json
-from sqlalchemy import delete
+from sqlalchemy import delete, select
+from app.core.config import settings
+from app.core.security import get_password_hash
 from app.db.session import SessionLocal
 import app.models  # noqa: F401 - register all SQLAlchemy models for relationships
 from app.models.assessment import Assessment
 from app.models.coding import CodingProblem, TestCase
 from app.models.mcq import MCQQuestion
+from app.models.user import RoleEnum, User
 
 ASSESSMENT_TITLE = "Round 1: Online Assessment"
 SEEDED_CODING_PROBLEM_IDS = [1, 3]
@@ -114,6 +117,29 @@ int main() {
 async def seed_database():
     print("Starting database seed process for the decoupled architecture...")
     async with SessionLocal() as db:
+        if settings.MASTER_ADMIN_USERNAME and settings.MASTER_ADMIN_EMAIL and settings.MASTER_ADMIN_PASSWORD:
+            master_admin = (await db.execute(
+                select(User).where(User.username == settings.MASTER_ADMIN_USERNAME)
+            )).scalar_one_or_none()
+
+            if master_admin:
+                master_admin.email = settings.MASTER_ADMIN_EMAIL
+                master_admin.role = RoleEnum.admin
+                master_admin.is_master_admin = True
+                master_admin.hashed_password = get_password_hash(settings.MASTER_ADMIN_PASSWORD)
+                print(f"Updated master admin: {settings.MASTER_ADMIN_USERNAME}")
+            else:
+                db.add(User(
+                    username=settings.MASTER_ADMIN_USERNAME,
+                    email=settings.MASTER_ADMIN_EMAIL,
+                    hashed_password=get_password_hash(settings.MASTER_ADMIN_PASSWORD),
+                    role=RoleEnum.admin,
+                    is_master_admin=True,
+                ))
+                print(f"Created master admin: {settings.MASTER_ADMIN_USERNAME}")
+        else:
+            print("Master admin seed skipped. Set MASTER_ADMIN_USERNAME, MASTER_ADMIN_EMAIL, and MASTER_ADMIN_PASSWORD to create one.")
+
         await db.execute(
             delete(TestCase).where(TestCase.problem_id.in_(SEEDED_CODING_PROBLEM_IDS))
         )

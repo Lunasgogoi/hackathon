@@ -1,7 +1,7 @@
 # app/main.py
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from app.api import assessment, coding, admin , project , leaderboard , auth , mcq, team
+from app.api import assessment, coding, admin , project , leaderboard , auth , mcq, team, certificate
 from sqlalchemy.future import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import Depends
@@ -36,6 +36,7 @@ app.include_router(leaderboard.router,prefix="/api/v1")
 app.include_router(auth.router,prefix="/api/v1")
 app.include_router(mcq.router, prefix="/api/v1")
 app.include_router(team.router, prefix="/api/v1")
+app.include_router(certificate.router, prefix="/api/v1")
 
 @app.get("/api/v1/system/phases")
 async def get_system_phases(db: AsyncSession = Depends(get_db)):

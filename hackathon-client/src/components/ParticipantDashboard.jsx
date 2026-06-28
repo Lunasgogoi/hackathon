@@ -7,6 +7,8 @@ const LANGUAGES = {
   'C++': { judgeId: 54, extension: 'cpp' }
 };
 
+const DEFAULT_LANGUAGE = 'Python 3';
+
 const GENERIC_STARTERS = {
   'Python 3': `import sys
 
@@ -97,7 +99,7 @@ export default function ParticipantDashboard({ onSubmitAssessment }) {
   const [isLoadingAssessment, setIsLoadingAssessment] = useState(true);
   const [assessmentError, setAssessmentError] = useState('');
   const [activeQuestionId, setActiveQuestionId] = useState(null);
-  const [language, setLanguage] = useState('Python 3');
+  const [language, setLanguage] = useState(DEFAULT_LANGUAGE);
   const [codeByQuestion, setCodeByQuestion] = useState({});
   const [consoleOpen, setConsoleOpen] = useState(true);
   const [problemPaneWidth, setProblemPaneWidth] = useState(38);
@@ -142,7 +144,7 @@ export default function ParticipantDashboard({ onSubmitAssessment }) {
             return selectedOptions;
           }, {})
         );
-        setCodeByQuestion(getInitialCode(loadedQuestions, language));
+        setCodeByQuestion(getInitialCode(loadedQuestions, DEFAULT_LANGUAGE));
       } catch (error) {
         if (!isMounted) return;
         setAssessmentError(error.response?.data?.detail || 'Could not load the assessment.');

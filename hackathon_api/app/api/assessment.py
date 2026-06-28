@@ -1,11 +1,12 @@
 import json
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_db
+from app.api.deps import ensure_phase_active, get_current_user, get_db
+from app.core.email import send_round1_qualified_email
 from app.models.assessment import Assessment, AssessmentAttempt
 from app.models.coding import CodingProblem, CodingSubmission, SubmissionStatus, TestCase
 from app.models.mcq import MCQQuestion, MCQSubmission
@@ -40,6 +41,17 @@ def serialize_attempt_score(attempt: AssessmentAttempt) -> dict:
         "percentage": attempt.percentage,
         "status": attempt.status,
         "submitted_at": attempt.submitted_at.isoformat() if attempt.submitted_at else None,
+    }
+
+
+def serialize_missing_assessment_score(user_id: int, attempt: AssessmentAttempt | None = None) -> dict:
+    return {
+        "user_id": user_id,
+        "total_score": 0,
+        "max_score": 0,
+        "percentage": 0,
+        "status": attempt.status if attempt else "not_started",
+        "submitted_at": None,
     }
 
 
@@ -151,13 +163,7 @@ async def calculate_team_average(db: AsyncSession, team_id: int, assessment_id: 
         if attempt and attempt.status in FINAL_ATTEMPT_STATUSES:
             member_scores.append(serialize_attempt_score(attempt))
         else:
-            current_score = await calculate_user_assessment_score(db, member.id, assessment_id)
-            member_scores.append({
-                **current_score,
-                "percentage": 0,
-                "status": attempt.status if attempt else "not_started",
-                "submitted_at": None,
-            })
+            member_scores.append(serialize_missing_assessment_score(member.id, attempt))
 
     team_average = round(
         sum(score["percentage"] for score in member_scores) / len(member_scores),
@@ -189,6 +195,7 @@ async def get_current_assessment(
 ):
     if current_user.role != RoleEnum.participant:
         raise HTTPException(status_code=403, detail="Only participants can view assessments.")
+    await ensure_phase_active(db, "round1", "Round 1 assessment is not active.")
 
     assessment = await get_round1_assessment(db)
 
@@ -309,11 +316,13 @@ async def get_assessment_status(
 
 @router.post("/submit")
 async def submit_assessment(
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     if current_user.role != RoleEnum.participant:
         raise HTTPException(status_code=403, detail="Only participants can submit assessments.")
+    await ensure_phase_active(db, "round1", "Round 1 assessment submission is not active.")
     if not current_user.team_id:
         raise HTTPException(status_code=400, detail="You must be on a team before submitting Round 1.")
 
@@ -330,8 +339,23 @@ async def submit_assessment(
     team_summary = await calculate_team_average(db, current_user.team_id, assessment.id)
 
     team = (await db.execute(select(Team).where(Team.id == current_user.team_id))).scalar_one()
+    was_promoted = team.is_promoted_to_r2
     team.is_promoted_to_r2 = team_summary["team_average"] >= DEFAULT_ROUND2_CUTOFF_PERCENT
+    team_members = []
+    if team.is_promoted_to_r2 and not was_promoted:
+        team_members = list((await db.execute(
+            select(User).where(User.team_id == team.id, User.role == RoleEnum.participant)
+        )).scalars().all())
     await db.commit()
+
+    for member in team_members:
+        background_tasks.add_task(
+            send_round1_qualified_email,
+            member.email,
+            member.username,
+            team.name,
+            team_summary["team_average"],
+        )
 
     return {
         "message": "Assessment submitted and evaluated.",

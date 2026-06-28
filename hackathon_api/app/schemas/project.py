@@ -1,5 +1,5 @@
 # app/schemas/project.py
-from pydantic import BaseModel, HttpUrl
+from pydantic import BaseModel, Field, HttpUrl
 
 class ProjectCreate(BaseModel):
     title: str
@@ -11,7 +11,7 @@ class ProjectCreate(BaseModel):
 
 class RubricSubmit(BaseModel):
     project_id: int
-    ui_ux_score: float
-    technical_complexity: float
-    innovation: float
+    ui_ux_score: float = Field(..., ge=1, le=10)
+    technical_complexity: float = Field(..., ge=1, le=10)
+    innovation: float = Field(..., ge=1, le=10)
     feedback: str | None = None

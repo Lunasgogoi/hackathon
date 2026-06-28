@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { apiClient } from '../api/client';
+import { setAuthSession } from '../api/session';
 
 export default function Auth({ onLoginSuccess }) {
   const [isLogin, setIsLogin] = useState(true);
@@ -9,7 +10,6 @@ export default function Auth({ onLoginSuccess }) {
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [role, setRole] = useState('participant');
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -28,9 +28,10 @@ export default function Auth({ onLoginSuccess }) {
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
         });
 
-        // Save the real JWT token and role to the browser
-        localStorage.setItem('access_token', response.data.access_token);
-        localStorage.setItem('role', response.data.role);
+        setAuthSession({
+          token: response.data.access_token,
+          role: response.data.role
+        });
 
         // Trigger the app to load the Hub
         onLoginSuccess(response.data.role);
@@ -40,8 +41,7 @@ export default function Auth({ onLoginSuccess }) {
         await apiClient.post('/auth/register', {
           username,
           email,
-          password,
-          role
+          password
         });
 
         // Auto-switch to login after successful registration
@@ -99,18 +99,6 @@ export default function Auth({ onLoginSuccess }) {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
             />
-
-            {!isLogin && (
-              <select
-                className="appearance-none rounded-lg relative block w-full px-3 py-2 border border-gray-300 bg-white text-gray-900 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
-                value={role}
-                onChange={(e) => setRole(e.target.value)}
-              >
-                <option value="participant">Participant</option>
-                <option value="judge">Judge</option>
-                <option value="admin">Admin</option>
-              </select>
-            )}
           </div>
 
           <button

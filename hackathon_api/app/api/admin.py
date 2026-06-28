@@ -1,19 +1,81 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Depends, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.schemas.admin import PhaseUpdateRequest, BroadcastRequest
+from app.schemas.admin import BroadcastRequest, PhaseUpdateRequest, PrivilegedUserCreateRequest
 from app.models.system import SystemState
 from app.core.websocket import manager
 from app.db.session import get_db
-from app.api.deps import get_current_admin
+from app.api.deps import get_current_admin, get_current_master_admin
 
+from app.core.security import get_password_hash
 from app.models.team import Team
+from app.models.user import RoleEnum, User
 from app.api.assessment import calculate_team_average, get_round1_assessment
+from app.core.email import send_privileged_user_created_email, send_round1_qualified_email
 from pydantic import BaseModel, Field
 
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
+
+
+@router.get("/me")
+async def get_admin_profile(
+    current_user: User = Depends(get_current_admin),
+):
+    return {
+        "id": current_user.id,
+        "username": current_user.username,
+        "email": current_user.email,
+        "role": current_user.role,
+        "is_master_admin": current_user.is_master_admin,
+    }
+
+
+@router.post("/users", status_code=status.HTTP_201_CREATED)
+async def create_privileged_user(
+    payload: PrivilegedUserCreateRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_master_admin),
+):
+    existing = await db.execute(
+        select(User).where(
+            (User.email == payload.email) | (User.username == payload.username)
+        )
+    )
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="Username or email already exists.")
+
+    user = User(
+        username=payload.username.strip(),
+        email=str(payload.email),
+        hashed_password=get_password_hash(payload.password),
+        role=RoleEnum(payload.role),
+        is_master_admin=False,
+    )
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+
+    background_tasks.add_task(
+        send_privileged_user_created_email,
+        user.email,
+        user.username,
+        user.role.value,
+        payload.password,
+    )
+
+    return {
+        "message": f"{payload.role.title()} account created. Login email queued.",
+        "user": {
+            "id": user.id,
+            "username": user.username,
+            "email": user.email,
+            "role": user.role,
+            "is_master_admin": user.is_master_admin,
+        },
+    }
 
 
 @router.post("/phase")
@@ -75,6 +137,7 @@ class AutoPromoteRequest(BaseModel):
 @router.post("/auto-promote")
 async def auto_promote_teams(
     payload: AutoPromoteRequest,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_admin)
 ):
@@ -91,10 +154,23 @@ async def auto_promote_teams(
     for team in teams:
         team_summary = await calculate_team_average(db, team.id, assessment.id)
         is_promoted = team_summary["team_average"] >= payload.cutoff_score
+        was_promoted = team.is_promoted_to_r2
 
         team.is_promoted_to_r2 = is_promoted
         if is_promoted:
             promoted_count += 1
+            if not was_promoted:
+                members = list((await db.execute(
+                    select(User).where(User.team_id == team.id, User.role == RoleEnum.participant)
+                )).scalars().all())
+                for member in members:
+                    background_tasks.add_task(
+                        send_round1_qualified_email,
+                        member.email,
+                        member.username,
+                        team.name,
+                        team_summary["team_average"],
+                    )
 
         evaluated.append({
             "team_id": team.id,

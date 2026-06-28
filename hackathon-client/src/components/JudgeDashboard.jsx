@@ -35,7 +35,9 @@ export default function JudgeDashboard() {
     }, []);
 
     useEffect(() => {
-        fetchProjects();
+        const timer = window.setTimeout(fetchProjects, 0);
+
+        return () => window.clearTimeout(timer);
     }, [fetchProjects]);
 
     const handleEvaluate = async (e) => {

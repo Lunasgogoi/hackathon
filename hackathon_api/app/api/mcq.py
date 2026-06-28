@@ -6,7 +6,7 @@ from app.db.session import get_db
 from app.models.mcq import MCQQuestion, MCQSubmission # Updated import
 from app.models.user import User, RoleEnum
 from app.schemas.coding import MCQSubmitRequest
-from app.api.deps import get_current_user
+from app.api.deps import ensure_phase_active, get_current_user
 from app.api.assessment import ensure_assessment_attempt_is_editable
 
 router = APIRouter(prefix="/mcq", tags=["MCQ Round"])
@@ -19,6 +19,7 @@ async def submit_mcq(
 ):
     if current_user.role != RoleEnum.participant:
         raise HTTPException(status_code=403, detail="Only participants can submit.")
+    await ensure_phase_active(db, "round1", "MCQ submissions are only allowed while Round 1 is active.")
 
     # 1. Fetch the question
     result = await db.execute(select(MCQQuestion).where(MCQQuestion.id == request.question_id))

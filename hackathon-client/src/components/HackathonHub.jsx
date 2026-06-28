@@ -64,6 +64,85 @@ const getParticipantStatuses = (stages, progress, round2Eligible) => {
   };
 };
 
+const getHackathonAccess = (stages, participantStatuses, hasTeam, round2Eligible) => {
+  if (!hasTeam) {
+    return {
+      status: 'Team Required',
+      label: 'Create or Join Team First',
+      helper: 'Team membership is required before entering the hackathon.',
+      action: 'team',
+      disabled: false,
+      buttonClass: 'bg-blue-600 text-white hover:bg-blue-700'
+    };
+  }
+
+  if (stages.finale === 'completed') {
+    return {
+      status: 'Ended',
+      label: 'View Final Standings',
+      helper: 'The hackathon has ended. Final standings remain available.',
+      action: 'leaderboard',
+      disabled: false,
+      buttonClass: 'bg-gray-900 text-white hover:bg-black'
+    };
+  }
+
+  if (stages.finale === 'active') {
+    return {
+      status: 'Started',
+      label: 'Attend Finale',
+      helper: 'Final judging is live. Follow the standings in real time.',
+      action: 'leaderboard',
+      disabled: false,
+      buttonClass: 'bg-purple-600 text-white hover:bg-purple-700'
+    };
+  }
+
+  if (stages.round2 === 'active') {
+    if (round2Eligible && participantStatuses.round2 === 'active') {
+      return {
+        status: 'Started',
+        label: 'Enter Build Phase',
+        helper: 'Round 2 is live for your qualified team.',
+        action: 'project',
+        disabled: false,
+        buttonClass: 'bg-blue-600 text-white hover:bg-blue-700'
+      };
+    }
+
+    return {
+      status: 'Started',
+      label: 'Attend Hackathon',
+      helper: 'Round 2 is live. You can follow the public standings.',
+      action: 'leaderboard',
+      disabled: false,
+      buttonClass: 'bg-indigo-600 text-white hover:bg-indigo-700'
+    };
+  }
+
+  if (stages.round1 === 'active') {
+    return {
+      status: 'Started',
+      label: participantStatuses.round1 === 'completed' ? 'View Round 1' : 'Enter Round 1',
+      helper: participantStatuses.round1 === 'completed'
+        ? 'Your Round 1 submission is recorded. You can still enter the hackathon view.'
+        : 'Round 1 is live for registered team members.',
+      action: 'assessment',
+      disabled: false,
+      buttonClass: 'bg-blue-600 text-white hover:bg-blue-700'
+    };
+  }
+
+  return {
+    status: 'Not Started',
+    label: 'Hackathon Not Started',
+    helper: 'You can manage your team until an organizer starts Round 1.',
+    action: null,
+    disabled: true,
+    buttonClass: 'bg-gray-100 text-gray-400'
+  };
+};
+
 const formatApiError = (error, fallback = 'Something went wrong.') => {
   const detail = error.response?.data?.detail;
   if (typeof detail === 'string') return detail;
@@ -420,10 +499,135 @@ function TeamPanel({ teamPayload, setTeamPayload }) {
   );
 }
 
+function TeamAccessCard({
+  teamPayload,
+  teamError,
+  accessDetails,
+  onAccess,
+  onDownloadCertificate,
+  isDownloadingCertificate,
+  certificateError
+}) {
+  const team = teamPayload?.team;
+  const canRequestCertificate = team && accessDetails.status === 'Ended';
+
+  return (
+    <aside className="space-y-6">
+      <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="text-xs font-bold uppercase text-gray-400">Hackathon Access</div>
+            <h2 className="mt-1 text-xl font-black text-gray-900">{accessDetails.status}</h2>
+          </div>
+          {team && (
+            <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-black text-emerald-700">
+              Team Ready
+            </span>
+          )}
+        </div>
+        <p className="mt-3 text-sm text-gray-600">{accessDetails.helper}</p>
+        <button
+          type="button"
+          onClick={() => onAccess()}
+          disabled={accessDetails.disabled}
+          className={`mt-5 w-full rounded-lg px-4 py-2 text-sm font-bold transition disabled:cursor-not-allowed ${accessDetails.buttonClass}`}
+        >
+          {accessDetails.label}
+        </button>
+        {canRequestCertificate && (
+          <button
+            type="button"
+            onClick={onDownloadCertificate}
+            disabled={isDownloadingCertificate}
+            className="mt-3 w-full rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-bold text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-wait disabled:bg-gray-100 disabled:text-gray-400"
+          >
+            {isDownloadingCertificate ? 'Preparing Certificate...' : 'Download Certificate'}
+          </button>
+        )}
+        {certificateError && (
+          <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700">
+            {certificateError}
+          </div>
+        )}
+      </div>
+
+      <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
+        <div className="mb-4 flex items-start justify-between gap-4">
+          <div>
+            <div className="text-xs font-bold uppercase text-gray-400">Team</div>
+            <h2 className="mt-1 text-lg font-black text-gray-900">
+              {team ? team.name : 'No Team Yet'}
+            </h2>
+          </div>
+          {team && (
+            <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-black text-gray-600">
+              {team.member_count}/{team.max_members}
+            </span>
+          )}
+        </div>
+        <p className="text-sm text-gray-600">
+          {team
+            ? `${team.name} is registered and ready for active hackathon phases.`
+            : teamError || 'Create a team or join one using an invite code.'}
+        </p>
+        <button
+          type="button"
+          onClick={() => onAccess('team')}
+          className="mt-5 w-full rounded-lg border border-gray-200 bg-gray-50 px-4 py-2 text-sm font-bold text-gray-700 transition hover:bg-gray-100"
+        >
+          Manage Team
+        </button>
+      </div>
+    </aside>
+  );
+}
+
+export function TeamPage() {
+  const [teamPayload, setTeamPayload] = useState(null);
+  const [teamError, setTeamError] = useState('');
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadTeam = async () => {
+      try {
+        const response = await apiClient.get('/teams/me');
+        if (isMounted) setTeamPayload(response.data);
+      } catch (error) {
+        if (isMounted) setTeamError(formatApiError(error, 'Could not load team details.'));
+      }
+    };
+
+    loadTeam();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  return (
+    <div className="mx-auto mt-8 max-w-3xl pb-12">
+      <div className="mb-6">
+        <div className="text-xs font-bold uppercase text-blue-600">Team Setup</div>
+        <h1 className="text-3xl font-black tracking-tight text-gray-900">Manage Team</h1>
+      </div>
+      {teamPayload ? (
+        <TeamPanel teamPayload={teamPayload} setTeamPayload={setTeamPayload} />
+      ) : (
+        <div className="rounded-xl border border-gray-200 bg-white p-6 text-sm font-semibold text-gray-500 shadow-sm">
+          {teamError || 'Loading team setup...'}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function HackathonHub({ stages, progress, round2Eligible, onLaunchOA, onLaunchProject }) {
   const navigate = useNavigate();
   const [teamPayload, setTeamPayload] = useState(null);
   const [teamError, setTeamError] = useState('');
+  const [certificateError, setCertificateError] = useState('');
+  const [isDownloadingCertificate, setIsDownloadingCertificate] = useState(false);
   const participantStatuses = getParticipantStatuses(stages, progress, round2Eligible);
 
   useEffect(() => {
@@ -450,11 +654,60 @@ export default function HackathonHub({ stages, progress, round2Eligible, onLaunc
   const round2Status = participantStatuses.round2;
   const finaleStatus = participantStatuses.finale;
   const hasTeam = Boolean(teamPayload?.team);
+  const isRound2Live = stages.round2 === 'active';
+  const canOpenRound2 = isRound2Live && round2Status === 'active' && round2Eligible;
+  const accessDetails = getHackathonAccess(stages, participantStatuses, hasTeam, round2Eligible);
 
   const registrationClasses = getPhaseClasses(registrationStatus);
   const round1Classes = getPhaseClasses(round1Status);
   const round2Classes = getPhaseClasses(round2Status);
   const finaleClasses = getPhaseClasses(finaleStatus, 'purple');
+
+  const handleAccess = (overrideAction) => {
+    const action = overrideAction || accessDetails.action;
+
+    if (action === 'team') navigate('/team');
+    if (action === 'assessment') onLaunchOA();
+    if (action === 'project') onLaunchProject();
+    if (action === 'leaderboard') navigate('/leaderboard');
+  };
+
+  const handleDownloadCertificate = async () => {
+    setCertificateError('');
+    setIsDownloadingCertificate(true);
+
+    try {
+      const response = await apiClient.get('/certificates/my-team', {
+        responseType: 'blob'
+      });
+      const blob = new Blob([response.data], { type: 'application/pdf' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      const safeTeamName = (teamPayload?.team?.name || 'team').replace(/[^a-z0-9_-]+/gi, '-');
+      link.href = url;
+      link.download = `hackcore-certificate-${safeTeamName}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      let message = 'Certificate is not available yet.';
+      const detail = error.response?.data;
+      if (detail instanceof Blob) {
+        try {
+          const parsed = JSON.parse(await detail.text());
+          message = parsed.detail || message;
+        } catch {
+          message = 'Certificate is not available yet.';
+        }
+      } else if (detail?.detail) {
+        message = detail.detail;
+      }
+      setCertificateError(message);
+    } finally {
+      setIsDownloadingCertificate(false);
+    }
+  };
 
   return (
     <div className="mx-auto mt-8 grid max-w-6xl grid-cols-1 gap-8 pb-12 lg:grid-cols-3">
@@ -482,9 +735,14 @@ export default function HackathonHub({ stages, progress, round2Eligible, onLaunc
                   ? 'Create a team or join one with an invite code before Round 1.'
                   : 'Team registration is not open yet.'}
             </p>
-            <button disabled className="cursor-default rounded-lg border border-gray-200 bg-gray-50 px-6 py-2 text-sm font-medium text-gray-500">
-              {hasTeam ? 'Registration Complete' : registrationStatus === 'active' ? 'Team Setup Required' : 'Registration Locked'}
-            </button>
+            <div className="flex flex-wrap gap-3">
+              <button onClick={() => navigate('/team')} className="rounded-lg border border-gray-200 bg-gray-50 px-6 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100">
+                {hasTeam ? 'Manage Team' : registrationStatus === 'active' ? 'Set Up Team' : 'View Team'}
+              </button>
+              <button onClick={() => navigate('/rules')} className="rounded-lg border border-blue-200 bg-blue-50 px-6 py-2 text-sm font-bold text-blue-700 hover:bg-blue-100">
+                Rules
+              </button>
+            </div>
           </div>
         </div>
 
@@ -526,13 +784,17 @@ export default function HackathonHub({ stages, progress, round2Eligible, onLaunc
             <div className="mb-2 flex items-start justify-between gap-4">
               <h3 className="text-lg font-bold text-gray-900">Round 2: Virtual Build Phase</h3>
               <span className={`rounded-full px-3 py-1 text-xs font-semibold ${round2Classes.badge} ${round2Status === 'active' ? 'animate-pulse' : ''}`}>
-                {PHASE_LABELS[round2Status]}
+                {isRound2Live && !canOpenRound2 ? 'Qualified Teams Only' : PHASE_LABELS[round2Status]}
               </span>
             </div>
             <p className="mb-4 text-sm text-gray-600">Promoted teams will submit their GitHub repository, tech stack details, and presentation assets.</p>
-            {round2Status === 'active' ? (
-              <button onClick={onLaunchProject} className="w-full rounded-lg bg-blue-600 px-6 py-2 font-medium text-white shadow-sm transition hover:bg-blue-700 sm:w-auto">
-                Open Project Builder
+            {isRound2Live ? (
+              <button
+                onClick={canOpenRound2 ? onLaunchProject : undefined}
+                disabled={!canOpenRound2}
+                className="w-full rounded-lg bg-blue-600 px-6 py-2 font-medium text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400 sm:w-auto"
+              >
+                {canOpenRound2 ? 'Open Project Builder' : 'Round 1 Qualification Required'}
               </button>
             ) : (
               <button disabled className="w-full cursor-not-allowed rounded-lg bg-gray-100 px-6 py-2 font-medium text-gray-400 sm:w-auto">
@@ -575,13 +837,15 @@ export default function HackathonHub({ stages, progress, round2Eligible, onLaunc
         </div>
       </div>
 
-      {teamPayload ? (
-        <TeamPanel teamPayload={teamPayload} setTeamPayload={setTeamPayload} />
-      ) : (
-        <aside className="rounded-xl border border-gray-200 bg-white p-6 text-sm font-semibold text-gray-500 shadow-sm">
-          {teamError || 'Loading team setup...'}
-        </aside>
-      )}
+      <TeamAccessCard
+        teamPayload={teamPayload}
+        teamError={teamError}
+        accessDetails={accessDetails}
+        onAccess={handleAccess}
+        onDownloadCertificate={handleDownloadCertificate}
+        isDownloadingCertificate={isDownloadingCertificate}
+        certificateError={certificateError}
+      />
     </div>
   );
 }

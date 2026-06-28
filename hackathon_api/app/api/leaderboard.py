@@ -1,6 +1,5 @@
 # app/api/leaderboard.py
-from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, HTTPException
-from httpx import request
+from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import func
@@ -10,7 +9,8 @@ import json
 
 from app.api.deps import get_db, get_current_admin
 from app.models.team import Team
-from app.models.project import RubricEvaluation
+from app.models.project import ProjectSubmission, RubricEvaluation
+from app.models.user import RoleEnum, User
 
 router = APIRouter(prefix="/leaderboard", tags=["Round 3: Live Finals"])
 
@@ -37,15 +37,25 @@ manager = ConnectionManager()
 
 # Helper function to calculate current standings
 async def fetch_top_teams(db: AsyncSession, limit: int = 10):
-    # This query joins Teams and their RubricEvaluations, summing the scores
+    judge_count = (await db.execute(
+        select(func.count(User.id)).where(User.role == RoleEnum.judge)
+    )).scalar_one()
+
+    if judge_count == 0:
+        return []
+
     query = (
         select(
+            Team.id.label("team_id"),
             Team.name,
-            func.coalesce(func.sum(RubricEvaluation.total_score), 0).label("total_points")
+            func.coalesce(func.sum(RubricEvaluation.total_score), 0).label("total_points"),
+            func.count(func.distinct(RubricEvaluation.judge_id)).label("evaluations_count"),
         )
-        .outerjoin(RubricEvaluation, RubricEvaluation.project_id == Team.id) 
+        .join(ProjectSubmission, ProjectSubmission.team_id == Team.id)
+        .outerjoin(RubricEvaluation, RubricEvaluation.project_id == ProjectSubmission.id)
         .where(Team.is_promoted_to_r2 == True)
-        .group_by(Team.id)
+        .group_by(Team.id, ProjectSubmission.id)
+        .having(func.count(func.distinct(RubricEvaluation.judge_id)) >= judge_count)
         .order_by(func.sum(RubricEvaluation.total_score).desc())
         .limit(limit)
     )
@@ -55,7 +65,14 @@ async def fetch_top_teams(db: AsyncSession, limit: int = 10):
     
     # Format the data into a clean JSON structure
     leaderboard = [
-        {"rank": index + 1, "team": row.name, "score": row.total_points}
+        {
+            "rank": index + 1,
+            "team_id": row.team_id,
+            "team": row.name,
+            "score": row.total_points,
+            "evaluations_count": row.evaluations_count,
+            "required_evaluations": judge_count,
+        }
         for index, row in enumerate(standings)
     ]
     return leaderboard

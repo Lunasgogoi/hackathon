@@ -1,15 +1,23 @@
 import { useCallback, useState, useEffect } from 'react';
-import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
 
 // Components
 import Auth from './components/Auth';
-import HackathonHub from './components/HackathonHub';
+import HackathonHub, { TeamPage } from './components/HackathonHub';
 import ParticipantDashboard from './components/ParticipantDashboard';
 import ProjectBuilder from './components/ProjectBuilder';
 import JudgeDashboard from './components/JudgeDashboard';
 import LiveLeaderboard from './components/LiveLeaderboard';
 import AdminDashboard from './components/AdminDashboard';
-import { apiClient } from './api/client';
+import HackathonRules from './components/HackathonRules';
+import { apiClient, buildWebSocketUrl } from './api/client';
+import {
+  clearAuthSession,
+  getAccessToken,
+  getSessionRole,
+  loadStoredParticipantProgress,
+  saveStoredParticipantProgress
+} from './api/session';
 
 const DEFAULT_STAGES = {
   registration: 'active',
@@ -31,25 +39,26 @@ const DEFAULT_ASSESSMENT_STATUS = {
   team: null
 };
 
+const LoadingScreen = ({ label = 'Loading...' }) => (
+  <div className="flex min-h-[50vh] items-center justify-center text-sm font-bold text-gray-500">
+    {label}
+  </div>
+);
+
 const loadParticipantProgress = () => {
-  try {
-    const savedProgress = JSON.parse(localStorage.getItem('participant_progress'));
-    return { ...DEFAULT_PARTICIPANT_PROGRESS, ...savedProgress };
-  } catch {
-    return DEFAULT_PARTICIPANT_PROGRESS;
-  }
+  return loadStoredParticipantProgress(DEFAULT_PARTICIPANT_PROGRESS);
 };
 
 const saveParticipantProgress = (updater) => {
   const nextProgress = updater(loadParticipantProgress());
-  localStorage.setItem('participant_progress', JSON.stringify(nextProgress));
+  saveStoredParticipantProgress(nextProgress);
   return nextProgress;
 };
 
 // 1. The Security Wrapper
 const ProtectedRoute = ({ children, allowedRoles }) => {
-  const token = localStorage.getItem('access_token');
-  const role = localStorage.getItem('role');
+  const token = getAccessToken();
+  const role = getSessionRole();
 
   if (!token) return <Navigate to="/auth" replace />;
   if (allowedRoles && !allowedRoles.includes(role)) {
@@ -64,8 +73,14 @@ const ProtectedRoute = ({ children, allowedRoles }) => {
 
 // 2. The Global Navbar Layout
 const MainLayout = ({ children, onSignOut }) => {
-  const role = localStorage.getItem('role');
+  const role = getSessionRole();
   const navigate = useNavigate();
+  const location = useLocation();
+  const navButtonClass = (path) => (
+    location.pathname === path
+      ? 'text-sm font-bold text-blue-700 bg-blue-50 px-3 py-1.5 rounded transition'
+      : 'text-sm font-bold text-gray-600 px-3 py-1.5 rounded transition hover:bg-gray-100 hover:text-gray-900'
+  );
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -74,6 +89,16 @@ const MainLayout = ({ children, onSignOut }) => {
           <h1 className="text-2xl font-black tracking-tight text-gray-900 cursor-pointer" onClick={() => navigate('/')}>
             HACK<span className="text-blue-600">CORE</span>
           </h1>
+          {role === 'participant' && (
+            <div className="hidden items-center gap-1 sm:flex">
+              <button type="button" onClick={() => navigate('/hub')} className={navButtonClass('/hub')}>
+                Hub
+              </button>
+              <button type="button" onClick={() => navigate('/team')} className={navButtonClass('/team')}>
+                Team
+              </button>
+            </div>
+          )}
         </div>
         <div className="flex items-center gap-4">
           <p className="text-sm text-gray-500 font-medium hidden sm:block">
@@ -100,6 +125,7 @@ export default function App() {
   const [hackathonStages, setHackathonStages] = useState(DEFAULT_STAGES);
   const [participantProgress, setParticipantProgress] = useState(loadParticipantProgress);
   const [assessmentStatus, setAssessmentStatus] = useState(DEFAULT_ASSESSMENT_STATUS);
+  const [assessmentStatusLoaded, setAssessmentStatusLoaded] = useState(false);
   const [authSessionVersion, setAuthSessionVersion] = useState(0);
 
   return (
@@ -111,6 +137,8 @@ export default function App() {
         setParticipantProgress={setParticipantProgress}
         assessmentStatus={assessmentStatus}
         setAssessmentStatus={setAssessmentStatus}
+        assessmentStatusLoaded={assessmentStatusLoaded}
+        setAssessmentStatusLoaded={setAssessmentStatusLoaded}
         authSessionVersion={authSessionVersion}
         setAuthSessionVersion={setAuthSessionVersion}
       />
@@ -126,6 +154,8 @@ function AppRoutes({
   setParticipantProgress,
   assessmentStatus,
   setAssessmentStatus,
+  assessmentStatusLoaded,
+  setAssessmentStatusLoaded,
   authSessionVersion,
   setAuthSessionVersion
 }) {
@@ -148,7 +178,10 @@ function AppRoutes({
   }, [setParticipantProgress]);
 
   const fetchAssessmentStatus = useCallback(async () => {
-    if (localStorage.getItem('role') !== 'participant') return;
+    if (getSessionRole() !== 'participant') {
+      setAssessmentStatusLoaded(true);
+      return;
+    }
 
     try {
       const response = await apiClient.get('/assessment/status');
@@ -165,19 +198,21 @@ function AppRoutes({
       }
     } catch (error) {
       console.error('Could not load assessment status', error);
+    } finally {
+      setAssessmentStatusLoaded(true);
     }
-  }, [markParticipantProgress, setAssessmentStatus]);
+  }, [markParticipantProgress, setAssessmentStatus, setAssessmentStatusLoaded, setParticipantProgress]);
 
   // Fetch the real global phases from the database on load.
   useEffect(() => {
-    if (localStorage.getItem('access_token')) {
+    if (getAccessToken()) {
       fetchPhases();
       fetchAssessmentStatus();
     }
   }, [fetchPhases, fetchAssessmentStatus, authSessionVersion]);
 
   useEffect(() => {
-    if (!localStorage.getItem('access_token')) return undefined;
+    if (!getAccessToken()) return undefined;
 
     let socket;
     let shouldClose = false;
@@ -185,7 +220,7 @@ function AppRoutes({
     const connectTimer = window.setTimeout(() => {
       if (shouldClose) return;
 
-      socket = new WebSocket('ws://127.0.0.1:8000/api/v1/system/ws');
+      socket = new WebSocket(buildWebSocketUrl('/system/ws'));
 
       socket.onmessage = (event) => {
         try {
@@ -228,9 +263,9 @@ function AppRoutes({
   }, [setStages, authSessionVersion]);
 
   const handleSignOut = () => {
-    localStorage.removeItem('access_token');
-    localStorage.removeItem('role');
+    clearAuthSession();
     setAssessmentStatus(DEFAULT_ASSESSMENT_STATUS);
+    setAssessmentStatusLoaded(false);
     setAuthSessionVersion(prev => prev + 1);
     navigate('/auth');
   };
@@ -292,16 +327,38 @@ function AppRoutes({
         </ProtectedRoute>
       } />
 
+      <Route path="/team" element={
+        <ProtectedRoute allowedRoles={['participant']}>
+          <MainLayout onSignOut={handleSignOut}>
+            <TeamPage />
+          </MainLayout>
+        </ProtectedRoute>
+      } />
+
+      <Route path="/rules" element={
+        <ProtectedRoute allowedRoles={['participant']}>
+          <MainLayout onSignOut={handleSignOut}>
+            <HackathonRules />
+          </MainLayout>
+        </ProtectedRoute>
+      } />
+
       <Route path="/project-builder" element={
         <ProtectedRoute allowedRoles={['participant']}>
           <MainLayout onSignOut={handleSignOut}>
             <div className="-mx-4 -mt-4">
-              <ProjectBuilder onExit={(submitted) => {
-                if (submitted) {
-                  markParticipantProgress('round2');
-                }
-                navigate('/hub');
-              }} />
+              {!assessmentStatusLoaded ? (
+                <LoadingScreen label="Checking Round 2 access..." />
+              ) : stages.round2 === 'active' && assessmentStatus.qualified_for_round2 ? (
+                <ProjectBuilder onExit={(submitted) => {
+                  if (submitted) {
+                    markParticipantProgress('round2');
+                  }
+                  navigate('/hub');
+                }} />
+              ) : (
+                <Navigate to="/hub" replace />
+              )}
             </div>
           </MainLayout>
         </ProtectedRoute>

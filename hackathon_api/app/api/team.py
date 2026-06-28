@@ -5,14 +5,15 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_db
+from app.api.deps import ensure_phase_active, get_current_user, get_db
 from app.models.team import Team
 from app.models.user import RoleEnum, User
 from app.schemas.team import TeamCreate, TeamJoin, UserProfileUpdate
 
 router = APIRouter(prefix="/teams", tags=["Teams"])
 
-INVITE_ALPHABET = string.ascii_uppercase + string.digits
+INVITE_ALPHABET = string.ascii_uppercase
+INVITE_CODE_LENGTH = 6
 
 
 def serialize_member(member: User, captain_id: int | None) -> dict:
@@ -28,13 +29,24 @@ def serialize_member(member: User, captain_id: int | None) -> dict:
 
 async def generate_invite_code(db: AsyncSession) -> str:
     while True:
-        code = "".join(secrets.choice(INVITE_ALPHABET) for _ in range(8))
+        code = "".join(secrets.choice(INVITE_ALPHABET) for _ in range(INVITE_CODE_LENGTH))
         existing = await db.execute(select(Team.id).where(Team.invite_code == code))
         if existing.scalar_one_or_none() is None:
             return code
 
 
+async def ensure_team_invite_code(db: AsyncSession, team: Team) -> None:
+    if team.invite_code:
+        return
+
+    team.invite_code = await generate_invite_code(db)
+    await db.commit()
+    await db.refresh(team)
+
+
 async def serialize_team(db: AsyncSession, team: Team) -> dict:
+    await ensure_team_invite_code(db, team)
+
     members = list((await db.execute(
         select(User).where(User.team_id == team.id).order_by(User.id)
     )).scalars().all())
@@ -83,6 +95,7 @@ async def create_team(
     current_user: User = Depends(get_current_user),
 ):
     ensure_participant(current_user)
+    await ensure_phase_active(db, "registration", "Teams can only be created during registration.")
 
     if current_user.team_id:
         raise HTTPException(status_code=400, detail="You are already in a team.")
@@ -119,6 +132,7 @@ async def join_team(
     current_user: User = Depends(get_current_user),
 ):
     ensure_participant(current_user)
+    await ensure_phase_active(db, "registration", "Teams can only be joined during registration.")
 
     if current_user.team_id:
         raise HTTPException(status_code=400, detail="You are already in a team.")

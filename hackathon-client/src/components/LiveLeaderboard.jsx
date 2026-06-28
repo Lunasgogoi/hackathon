@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { buildWebSocketUrl } from '../api/client';
 
 export default function LiveLeaderboard({ onExit }) {
   const [leaderboard, setLeaderboard] = useState([]);
@@ -11,7 +12,7 @@ export default function LiveLeaderboard({ onExit }) {
     const connectTimer = window.setTimeout(() => {
       if (shouldClose) return;
 
-      ws = new WebSocket('ws://127.0.0.1:8000/api/v1/leaderboard/ws');
+      ws = new WebSocket(buildWebSocketUrl('/leaderboard/ws'));
 
       ws.onopen = () => {
         setConnectionStatus('Live');
@@ -23,7 +24,7 @@ export default function LiveLeaderboard({ onExit }) {
         // Look for data.data instead of data.leaderboard
         if (payload.type === 'initial_load' || payload.type === 'live_update') {
           // Sort based on 'score' instead of 'total_score'
-          const sortedTeams = payload.data.sort((a, b) => b.score - a.score);
+          const sortedTeams = [...payload.data].sort((a, b) => b.score - a.score);
           setLeaderboard(sortedTeams);
         }
       };
@@ -115,7 +116,7 @@ export default function LiveLeaderboard({ onExit }) {
 
             return (
               <div
-                key={team.team_name}
+                key={team.team}
                 className={`grid grid-cols-12 gap-4 items-center px-6 py-5 rounded-xl border transition-all duration-500 transform hover:scale-[1.01]
                   ${isFirst ? 'bg-gradient-to-r from-yellow-500/10 to-transparent border-yellow-500/30 shadow-[0_0_30px_rgba(234,179,8,0.1)]' :
                     isSecond ? 'bg-gradient-to-r from-gray-300/10 to-transparent border-gray-300/20' :
