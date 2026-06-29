@@ -3,7 +3,10 @@ import { buildWebSocketUrl } from '../api/client';
 
 export default function LiveLeaderboard({ onExit }) {
   const [leaderboard, setLeaderboard] = useState([]);
-  const [connectionStatus, setConnectionStatus] = useState('Connecting...');
+  const topScore = leaderboard.length ? Math.max(...leaderboard.map(team => Number(team.score) || 0)) : 0;
+  const averageScore = leaderboard.length
+    ? leaderboard.reduce((total, team) => total + (Number(team.score) || 0), 0) / leaderboard.length
+    : 0;
 
   useEffect(() => {
     let ws;
@@ -14,16 +17,10 @@ export default function LiveLeaderboard({ onExit }) {
 
       ws = new WebSocket(buildWebSocketUrl('/leaderboard/ws'));
 
-      ws.onopen = () => {
-        setConnectionStatus('Live');
-      };
-
       ws.onmessage = (event) => {
         const payload = JSON.parse(event.data);
 
-        // Look for data.data instead of data.leaderboard
         if (payload.type === 'initial_load' || payload.type === 'live_update') {
-          // Sort based on 'score' instead of 'total_score'
           const sortedTeams = [...payload.data].sort((a, b) => b.score - a.score);
           setLeaderboard(sortedTeams);
         }
@@ -32,13 +29,6 @@ export default function LiveLeaderboard({ onExit }) {
       ws.onerror = (error) => {
         if (!shouldClose) {
           console.error('WebSocket Error:', error);
-          setConnectionStatus('Error');
-        }
-      };
-
-      ws.onclose = () => {
-        if (!shouldClose) {
-          setConnectionStatus('Disconnected');
         }
       };
     }, 0);
@@ -62,97 +52,127 @@ export default function LiveLeaderboard({ onExit }) {
   }, []);
 
   return (
-    <div className="min-h-screen w-screen bg-[#0b1017] text-white flex flex-col font-sans relative overflow-hidden">
+    <div className="min-h-screen w-screen overflow-hidden bg-[#101317] text-slate-100 font-sans">
+      <header className="border-b border-white/10 bg-[#12161c]">
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-6 px-8 py-5">
+          <button
+            onClick={onExit}
+            className="inline-flex items-center gap-2 rounded-md px-2 py-2 text-sm font-semibold text-slate-400 transition hover:bg-white/5 hover:text-slate-100"
+          >
+            <span aria-hidden="true">&lt;-</span>
+            Close Projector
+          </button>
 
-      {/* Background Glow Effects */}
-      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[400px] bg-blue-600/20 blur-[120px] rounded-full pointer-events-none"></div>
+          <div className="text-center">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-emerald-300">
+              Grand Finale
+            </div>
+            <h1 className="mt-1 text-2xl font-semibold tracking-tight text-slate-50 sm:text-3xl">
+              Live Leaderboard
+            </h1>
+          </div>
 
-      {/* Header */}
-      <header className="px-10 py-8 flex justify-between items-center relative z-10 border-b border-gray-800/50 bg-[#0b1017]/50 backdrop-blur-md">
-        <button
-          onClick={onExit}
-          className="text-gray-500 hover:text-white transition-colors flex items-center gap-2"
-        >
-          <span>←</span> Close Projector
-        </button>
-
-        <h1 className="text-4xl font-black tracking-tighter uppercase text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-emerald-400">
-          Grand Finale Leaderboard
-        </h1>
-
-        <div className="flex items-center gap-3 bg-gray-900/80 px-4 py-2 rounded-full border border-gray-800">
-          <div className={`w-3 h-3 rounded-full animate-pulse ${connectionStatus === 'Live' ? 'bg-green-500 shadow-[0_0_10px_rgba(34,197,94,0.6)]' :
-            connectionStatus === 'Connecting...' ? 'bg-yellow-500' : 'bg-red-500'
-            }`}></div>
-          <span className="text-sm font-mono text-gray-300 font-medium tracking-wide uppercase">
-            {connectionStatus}
-          </span>
+          <div className="min-w-32" aria-hidden="true" />
         </div>
       </header>
 
-      {/* Main Leaderboard List */}
-      <main className="flex-1 max-w-5xl w-full mx-auto p-10 relative z-10 flex flex-col gap-4">
-
-        {/* Table Headers */}
-        <div className="grid grid-cols-12 gap-4 px-6 text-sm font-bold text-gray-500 uppercase tracking-wider mb-2">
-          <div className="col-span-1 text-center">Rank</div>
-          <div className="col-span-7">Team Name</div>
-          <div className="col-span-2 text-center">Projects</div>
-          <div className="col-span-2 text-right">Total Score</div>
-        </div>
-
-        {/* Dynamic Rows */}
-        {leaderboard.length === 0 ? (
-          <div className="text-center py-20 text-gray-500 border border-dashed border-gray-800 rounded-xl">
-            Awaiting live evaluations from judges...
+      <main className="mx-auto flex max-w-7xl flex-1 flex-col gap-6 px-8 py-8">
+        <section className="grid gap-4 md:grid-cols-3">
+          <div className="rounded-lg border border-white/10 bg-[#181d24] px-5 py-4">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Teams Ranked</div>
+            <div className="mt-2 text-2xl font-semibold text-slate-50">{leaderboard.length}</div>
           </div>
-        ) : (
-          leaderboard.map((team, index) => {
-            const rank = index + 1;
-            // Podium Styling
-            const isFirst = rank === 1;
-            const isSecond = rank === 2;
-            const isThird = rank === 3;
+          <div className="rounded-lg border border-white/10 bg-[#181d24] px-5 py-4">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Top Score</div>
+            <div className="mt-2 text-2xl font-semibold text-emerald-200">{topScore.toFixed(1)}</div>
+          </div>
+          <div className="rounded-lg border border-white/10 bg-[#181d24] px-5 py-4">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Average Score</div>
+            <div className="mt-2 text-2xl font-semibold text-slate-50">{averageScore.toFixed(1)}</div>
+          </div>
+        </section>
 
-            return (
-              <div
-                key={team.team}
-                className={`grid grid-cols-12 gap-4 items-center px-6 py-5 rounded-xl border transition-all duration-500 transform hover:scale-[1.01]
-                  ${isFirst ? 'bg-gradient-to-r from-yellow-500/10 to-transparent border-yellow-500/30 shadow-[0_0_30px_rgba(234,179,8,0.1)]' :
-                    isSecond ? 'bg-gradient-to-r from-gray-300/10 to-transparent border-gray-300/20' :
-                      isThird ? 'bg-gradient-to-r from-orange-500/10 to-transparent border-orange-500/20' :
-                        'bg-[#131b26] border-gray-800/50 hover:bg-[#1a2433]'}
-                `}
-              >
-                <div className="col-span-1 flex justify-center">
-                  <div className={`w-10 h-10 rounded-full flex items-center justify-center font-black text-lg
-                    ${isFirst ? 'bg-yellow-500 text-yellow-950 shadow-[0_0_15px_rgba(234,179,8,0.5)]' :
-                      isSecond ? 'bg-gray-300 text-gray-900' :
-                        isThird ? 'bg-orange-500 text-orange-950' :
-                          'bg-gray-800 text-gray-400'}
-                  `}>
-                    {rank}
-                  </div>
-                </div>
+        <section className="overflow-hidden rounded-lg border border-white/10 bg-[#151a20] shadow-2xl shadow-black/20">
+          <div className="grid grid-cols-12 gap-4 border-b border-white/10 bg-white/[0.03] px-6 py-4 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+            <div className="col-span-2 sm:col-span-1">Rank</div>
+            <div className="col-span-6 sm:col-span-7">Team</div>
+            <div className="col-span-2 text-center">Status</div>
+            <div className="col-span-2 text-right">Score</div>
+          </div>
 
-                <div className="col-span-7 font-bold text-2xl tracking-tight text-white">
-                  {team.team} {/* Changed from team.team_name */}
-                </div>
-
-                <div className="col-span-2 text-center text-gray-400 font-medium">
-                  {/* Since your DB query doesn't pull project counts, we can just show a checkmark */}
-                  ✅ Evaluated
-                </div>
-
-                <div className="col-span-2 text-right font-mono text-3xl font-bold text-white">
-                  {parseFloat(team.score).toFixed(1)} {/* Changed from team.total_score */}
-                </div>
+          {leaderboard.length === 0 ? (
+            <div className="flex min-h-[320px] flex-col items-center justify-center px-6 py-16 text-center">
+              <div className="flex h-12 w-12 items-center justify-center rounded-full border border-emerald-200/20 bg-emerald-200/10 text-lg font-semibold text-emerald-200">
+                0
               </div>
-            );
-          })
-        )}
+              <h2 className="mt-5 text-xl font-semibold tracking-tight text-slate-100">
+                No scores published yet
+              </h2>
+              <p className="mt-2 max-w-md text-sm font-medium leading-6 text-slate-400">
+                Submitted judge evaluations will appear here automatically in ranked order.
+              </p>
+              <div className="mt-6 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                <span className="h-2 w-2 rounded-full bg-emerald-300" />
+                Waiting for evaluations
+              </div>
+            </div>
+          ) : (
+            <div className="divide-y divide-white/10">
+              {leaderboard.map((team, index) => {
+                const rank = index + 1;
+                const isFirst = rank === 1;
+                const isSecond = rank === 2;
+                const isThird = rank === 3;
+
+                return (
+                  <div
+                    key={team.team}
+                    className={`grid grid-cols-12 items-center gap-4 px-6 py-5 transition ${
+                      isFirst
+                        ? 'bg-amber-300/10'
+                        : isSecond
+                          ? 'bg-slate-200/5'
+                          : isThird
+                            ? 'bg-orange-300/10'
+                            : 'bg-transparent hover:bg-white/[0.03]'
+                    }`}
+                  >
+                    <div className="col-span-2 sm:col-span-1">
+                      <div className={`flex h-9 w-9 items-center justify-center rounded-md text-sm font-semibold ${
+                        isFirst
+                          ? 'bg-amber-300 text-amber-950'
+                          : isSecond
+                            ? 'bg-slate-300 text-slate-950'
+                            : isThird
+                              ? 'bg-orange-300 text-orange-950'
+                              : 'bg-white/5 text-slate-300'
+                      }`}>
+                        {rank}
+                      </div>
+                    </div>
+
+                    <div className="col-span-6 min-w-0 sm:col-span-7">
+                      <div className="truncate text-lg font-semibold tracking-tight text-slate-50">
+                        {team.team}
+                      </div>
+                    </div>
+
+                    <div className="col-span-2 text-center">
+                      <span className="inline-flex rounded-full border border-emerald-200/20 bg-emerald-200/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-emerald-200">
+                        Evaluated
+                      </span>
+                    </div>
+
+                    <div className="col-span-2 text-right font-mono text-xl font-semibold text-slate-50">
+                      {(Number(team.score) || 0).toFixed(1)}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
       </main>
     </div>
   );
 }
-

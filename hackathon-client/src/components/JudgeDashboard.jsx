@@ -122,11 +122,11 @@ export default function JudgeDashboard() {
                             <p className="text-gray-600 text-sm mb-4">{selectedProject.description}</p>
 
                             <div className="flex gap-4">
-                                <a href={selectedProject.repo_url} target="_blank" rel="noreferrer" className="text-sm text-blue-600 hover:underline flex items-center gap-1">
+                                <a href={selectedProject.repo_url} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-sm text-blue-600 no-underline hover:underline">
                                     🔗 GitHub Repository
                                 </a>
                                 {selectedProject.asset_url && (
-                                    <a href={selectedProject.asset_url} target="_blank" rel="noreferrer" className="text-sm text-purple-600 hover:underline flex items-center gap-1">
+                                    <a href={selectedProject.asset_url} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-sm text-purple-600 no-underline hover:underline">
                                         🖼️ View Assets/Slides
                                     </a>
                                 )}

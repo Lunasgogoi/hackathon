@@ -806,19 +806,18 @@ export default function HackathonHub({ stages, progress, round2Eligible, onLaunc
   return (
     <div className="mx-auto mt-8 grid max-w-6xl grid-cols-1 gap-8 pb-12 lg:grid-cols-3">
       <div className="relative space-y-0 lg:col-span-2">
-        <div className="absolute bottom-8 left-[27px] top-8 z-0 hidden w-0.5 border-l border-dashed border-gray-400 bg-gray-200 sm:block"></div>
+        <div className="phase-timeline-line absolute bottom-8 left-[27px] top-8 z-0 hidden w-0.5 border-l border-dashed border-gray-400 bg-gray-200 sm:block"></div>
 
-        <div className="relative flex items-start p-4 sm:mb-8 sm:p-0">
-          <div className={`z-10 mr-6 mt-4 hidden h-14 w-14 items-center justify-center rounded-full border shadow-sm sm:flex ${registrationClasses.circle}`}>
-            <span className={`${registrationClasses.icon} text-lg font-bold`}>
+        <div className="phase-step relative flex items-start p-4 sm:mb-8 sm:p-0">
+          <div className={`phase-node z-10 mr-6 mt-4 hidden h-14 w-14 items-center justify-center rounded-full border shadow-sm sm:flex ${registrationClasses.circle}`}>
+            <span className={`phase-node-label ${registrationClasses.icon} text-lg font-bold`}>
               {registrationStatus === 'completed' ? 'OK' : '0'}
             </span>
           </div>
-          <div className={`relative flex-1 overflow-hidden rounded-xl border bg-white p-6 shadow-sm ${registrationClasses.card}`}>
-            {registrationClasses.stripe && <div className={`absolute left-0 top-0 h-full w-1 ${registrationClasses.stripe}`}></div>}
+          <div className={`phase-card relative flex-1 overflow-hidden rounded-xl border bg-white p-6 shadow-sm ${registrationClasses.card}`}>
             <div className="mb-2 flex items-start justify-between gap-4">
               <h3 className="text-lg font-bold text-gray-900">Team Registration</h3>
-              <span className={`rounded-full px-3 py-1 text-xs font-semibold ${registrationClasses.badge}`}>
+              <span className={`phase-badge rounded-full px-3 py-1 text-xs font-semibold ${registrationClasses.badge}`}>
                 {hasTeam ? 'Team Ready' : registrationStatus === 'active' ? 'Open Now' : PHASE_LABELS[registrationStatus]}
               </span>
             </div>
@@ -840,15 +839,14 @@ export default function HackathonHub({ stages, progress, round2Eligible, onLaunc
           </div>
         </div>
 
-        <div className="relative flex items-start p-4 sm:mb-8 sm:p-0">
-          <div className={`z-10 mr-6 mt-4 hidden h-14 w-14 items-center justify-center rounded-full border shadow-sm sm:flex ${round1Classes.circle}`}>
-            <span className={`${round1Classes.icon} text-lg font-bold`}>{round1Status === 'completed' ? 'OK' : '1'}</span>
+        <div className="phase-step relative flex items-start p-4 sm:mb-8 sm:p-0">
+          <div className={`phase-node z-10 mr-6 mt-4 hidden h-14 w-14 items-center justify-center rounded-full border shadow-sm sm:flex ${round1Classes.circle}`}>
+            <span className={`phase-node-label ${round1Classes.icon} text-lg font-bold`}>{round1Status === 'completed' ? 'OK' : '1'}</span>
           </div>
-          <div className={`relative flex-1 overflow-hidden rounded-xl border bg-white p-6 shadow-md ${round1Classes.card}`}>
-            {round1Classes.stripe && <div className={`absolute left-0 top-0 h-full w-1 ${round1Classes.stripe}`}></div>}
+          <div className={`phase-card relative flex-1 overflow-hidden rounded-xl border bg-white p-6 shadow-md ${round1Classes.card}`}>
             <div className="mb-2 flex items-start justify-between gap-4">
               <h3 className="text-lg font-bold text-gray-900">Round 1: Online Assessment</h3>
-              <span className={`rounded-full px-3 py-1 text-xs font-semibold ${round1Classes.badge} ${round1Status === 'active' ? 'animate-pulse' : ''}`}>
+              <span className={`phase-badge rounded-full px-3 py-1 text-xs font-semibold ${round1Classes.badge} ${round1Status === 'active' ? 'animate-pulse' : ''}`}>
                 {PHASE_LABELS[round1Status]}
               </span>
             </div>
@@ -869,15 +867,14 @@ export default function HackathonHub({ stages, progress, round2Eligible, onLaunc
           </div>
         </div>
 
-        <div className="relative flex items-start p-4 sm:mb-8 sm:p-0">
-          <div className={`z-10 mr-6 mt-4 hidden h-14 w-14 items-center justify-center rounded-full border shadow-sm sm:flex ${round2Classes.circle}`}>
-            <span className={`${round2Classes.icon} text-lg font-bold`}>{round2Status === 'completed' ? 'OK' : '2'}</span>
+        <div className="phase-step relative flex items-start p-4 sm:mb-8 sm:p-0">
+          <div className={`phase-node z-10 mr-6 mt-4 hidden h-14 w-14 items-center justify-center rounded-full border shadow-sm sm:flex ${round2Classes.circle}`}>
+            <span className={`phase-node-label ${round2Classes.icon} text-lg font-bold`}>{round2Status === 'completed' ? 'OK' : '2'}</span>
           </div>
-          <div className={`relative flex-1 overflow-hidden rounded-xl border bg-white p-6 shadow-sm ${round2Classes.card}`}>
-            {round2Classes.stripe && <div className={`absolute left-0 top-0 h-full w-1 ${round2Classes.stripe}`}></div>}
+          <div className={`phase-card relative flex-1 overflow-hidden rounded-xl border bg-white p-6 shadow-sm ${round2Classes.card}`}>
             <div className="mb-2 flex items-start justify-between gap-4">
               <h3 className="text-lg font-bold text-gray-900">Round 2: Virtual Build Phase</h3>
-              <span className={`rounded-full px-3 py-1 text-xs font-semibold ${round2Classes.badge} ${round2Status === 'active' ? 'animate-pulse' : ''}`}>
+              <span className={`phase-badge rounded-full px-3 py-1 text-xs font-semibold ${round2Classes.badge} ${round2Status === 'active' ? 'animate-pulse' : ''}`}>
                 {round2BadgeLabel}
               </span>
             </div>
@@ -902,13 +899,11 @@ export default function HackathonHub({ stages, progress, round2Eligible, onLaunc
           </div>
         </div>
 
-        <div className="relative flex items-start p-4 sm:mb-8 sm:p-0">
-          <div className={`z-10 mr-6 mt-4 hidden h-14 w-14 items-center justify-center rounded-full border shadow-sm sm:flex ${finaleClasses.circle}`}>
-            <span className={`${finaleClasses.icon} text-lg font-bold`}>3</span>
+        <div className="phase-step relative flex items-start p-4 sm:mb-8 sm:p-0">
+          <div className={`phase-node z-10 mr-6 mt-4 hidden h-14 w-14 items-center justify-center rounded-full border shadow-sm sm:flex ${finaleClasses.circle}`}>
+            <span className={`phase-node-label ${finaleClasses.icon} text-lg font-bold`}>3</span>
           </div>
-          <div className={`relative flex-1 overflow-hidden rounded-xl border bg-white p-6 shadow-sm ${finaleStatus === 'completed' ? 'border-yellow-400' : finaleClasses.card}`}>
-            {finaleStatus === 'active' && <div className={`absolute left-0 top-0 h-full w-1 ${finaleClasses.stripe}`}></div>}
-            {finaleStatus === 'completed' && <div className="absolute left-0 top-0 h-full w-1 bg-yellow-400"></div>}
+          <div className={`phase-card relative flex-1 overflow-hidden rounded-xl border bg-white p-6 shadow-sm ${finaleStatus === 'completed' ? 'border-yellow-400' : finaleClasses.card}`}>
             <div className="mb-2 flex items-start justify-between gap-4">
               <h3 className="text-lg font-bold text-gray-900">Round 3: Grand Finale</h3>
               {finaleStatus === 'active' && <span className="rounded-full bg-purple-100 px-3 py-1 text-xs font-semibold text-purple-700 animate-pulse">Grading Live</span>}

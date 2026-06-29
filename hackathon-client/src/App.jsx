@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from
 
 // Components
 import Auth from './components/Auth';
+import HackathonLanding from './components/HackathonLanding';
 import HackathonHub, { TeamPage } from './components/HackathonHub';
 import ParticipantDashboard from './components/ParticipantDashboard';
 import ProjectBuilder from './components/ProjectBuilder';
@@ -39,6 +40,8 @@ const DEFAULT_ASSESSMENT_STATUS = {
   user_score: null,
   team: null
 };
+
+const AUTH_THEME_STORAGE_KEY = 'hackcore-auth-theme';
 
 const LoadingScreen = ({ label = 'Loading...' }) => (
   <div className="flex min-h-[50vh] items-center justify-center text-sm font-bold text-gray-500">
@@ -81,14 +84,35 @@ const MainLayout = ({ children, onSignOut }) => {
   const role = getSessionRole();
   const navigate = useNavigate();
   const location = useLocation();
+  const [theme, setTheme] = useState(() => {
+    try {
+      return localStorage.getItem(AUTH_THEME_STORAGE_KEY) || 'light';
+    } catch {
+      return 'light';
+    }
+  });
+  const isDarkTheme = theme === 'dark';
   const navButtonClass = (path) => (
     location.pathname === path
       ? 'text-sm font-bold text-blue-700 bg-blue-50 px-3 py-1.5 rounded transition'
       : 'text-sm font-bold text-gray-600 px-3 py-1.5 rounded transition hover:bg-gray-100 hover:text-gray-900'
   );
+  const toggleTheme = () => {
+    setTheme((currentTheme) => {
+      const nextTheme = currentTheme === 'dark' ? 'light' : 'dark';
+
+      try {
+        localStorage.setItem(AUTH_THEME_STORAGE_KEY, nextTheme);
+      } catch {
+        // Ignore storage failures; the in-memory theme still updates.
+      }
+
+      return nextTheme;
+    });
+  };
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className={`app-auth-shell min-h-screen bg-gray-50 ${isDarkTheme ? 'theme-dark' : 'theme-light'}`}>
       <nav className="bg-white border-b border-gray-200 px-8 py-4 flex justify-between items-center shadow-sm sticky top-0 z-50">
         <div className="flex items-center gap-4">
           <h1 className="text-2xl font-black tracking-tight text-gray-900 cursor-pointer" onClick={() => navigate(getRoleHomePath(role))}>
@@ -109,6 +133,15 @@ const MainLayout = ({ children, onSignOut }) => {
           <p className="text-sm text-gray-500 font-medium hidden sm:block">
             Role: <span className="uppercase text-blue-600">{role}</span>
           </p>
+          <button
+            type="button"
+            onClick={toggleTheme}
+            className="flex items-center gap-2 rounded-full border border-gray-200 bg-gray-50 px-3 py-1.5 text-xs font-bold text-gray-600 transition hover:bg-gray-100"
+            aria-pressed={isDarkTheme}
+          >
+            <span className={`h-2.5 w-2.5 rounded-full ${isDarkTheme ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+            {isDarkTheme ? 'Dark' : 'Light'}
+          </button>
           <button
             onClick={() => navigate('/leaderboard')}
             className="text-sm font-bold text-indigo-600 bg-indigo-50 px-3 py-1.5 rounded hover:bg-indigo-100 transition"
@@ -278,7 +311,7 @@ function AppRoutes({
   return (
     <Routes>
       <Route path="/" element={
-        getAccessToken() ? <Navigate to={getRoleHomePath()} replace /> : <Navigate to="/auth" replace />
+        getAccessToken() ? <Navigate to={getRoleHomePath()} replace /> : <HackathonLanding />
       } />
 
       {/* Public Route */}
@@ -408,7 +441,7 @@ function AppRoutes({
       } />
 
       {/* Fallback Route */}
-      <Route path="*" element={<Navigate to="/auth" replace />} />
+      <Route path="*" element={<Navigate to={getAccessToken() ? getRoleHomePath() : '/'} replace />} />
     </Routes>
   );
 }
