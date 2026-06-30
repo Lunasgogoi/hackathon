@@ -695,7 +695,6 @@ export default function HackathonHub({ stages, progress, round2Eligible, onLaunc
   const [teamError, setTeamError] = useState('');
   const [certificateError, setCertificateError] = useState('');
   const [isDownloadingCertificate, setIsDownloadingCertificate] = useState(false);
-  const participantStatuses = getParticipantStatuses(stages, progress, round2Eligible);
 
   useEffect(() => {
     let isMounted = true;
@@ -717,36 +716,43 @@ export default function HackathonHub({ stages, progress, round2Eligible, onLaunc
   }, []);
 
   const hasTeam = Boolean(teamPayload?.team);
+  const hasProjectSubmission = Boolean(teamPayload?.team?.has_project_submission);
+  const effectiveRound2Eligible = round2Eligible || hasProjectSubmission;
+  const effectiveProgress = {
+    ...progress,
+    round1: Boolean(progress?.round1 || hasProjectSubmission),
+    round2: Boolean(progress?.round2 || hasProjectSubmission)
+  };
+  const participantStatuses = getParticipantStatuses(stages, effectiveProgress, effectiveRound2Eligible);
   const registrationStatus = hasTeam ? 'completed' : stages.registration || 'locked';
   const round1Status = participantStatuses.round1;
   const round2Status = participantStatuses.round2;
   const finaleStatus = participantStatuses.finale;
   const isTeamLeader = Boolean(teamPayload?.team && teamPayload?.current_user?.id === teamPayload.team.captain_id);
-  const hasProjectSubmission = Boolean(teamPayload?.team?.has_project_submission);
   const isRound2Live = stages.round2 === 'active';
-  const canOpenRound2 = isRound2Live && round2Status === 'active' && round2Eligible && isTeamLeader && !hasProjectSubmission;
+  const canOpenRound2 = isRound2Live && round2Status === 'active' && effectiveRound2Eligible && isTeamLeader && !hasProjectSubmission;
   const round2ButtonLabel = (() => {
     if (canOpenRound2) return 'Open Project Builder';
     if (hasProjectSubmission) return 'Project Submitted';
-    if (round2Eligible && hasTeam && !isTeamLeader) return 'Only Team Leaders Can Submit';
+    if (effectiveRound2Eligible && hasTeam && !isTeamLeader) return 'Only Team Leaders Can Submit';
     return 'Round 1 Qualification Required';
   })();
   const round2BadgeLabel = (() => {
     if (hasProjectSubmission) return 'Submitted';
-    if (isRound2Live && round2Eligible && hasTeam && !isTeamLeader) return 'Leader Only';
+    if (isRound2Live && effectiveRound2Eligible && hasTeam && !isTeamLeader) return 'Leader Only';
     if (isRound2Live && !canOpenRound2) return 'Qualified Teams Only';
     return PHASE_LABELS[round2Status];
   })();
   const round2HelperText = (() => {
     if (hasProjectSubmission) return 'Project submitted successfully. Your team is now under final review.';
-    if (round2Eligible && hasTeam && !isTeamLeader) return 'Only team leaders can submit the project for the team.';
+    if (effectiveRound2Eligible && hasTeam && !isTeamLeader) return 'Only team leaders can submit the project for the team.';
     return 'Promoted teams will submit their GitHub repository, tech stack details, and presentation assets.';
   })();
   const accessDetails = getHackathonAccess(
     stages,
     participantStatuses,
     hasTeam,
-    round2Eligible,
+    effectiveRound2Eligible,
     isTeamLeader,
     hasProjectSubmission
   );
@@ -869,7 +875,7 @@ export default function HackathonHub({ stages, progress, round2Eligible, onLaunc
 
         <div className="phase-step relative flex items-start p-4 sm:mb-8 sm:p-0">
           <div className={`phase-node z-10 mr-6 mt-4 hidden h-14 w-14 items-center justify-center rounded-full border shadow-sm sm:flex ${round2Classes.circle}`}>
-            <span className={`phase-node-label ${round2Classes.icon} text-lg font-bold`}>{round2Status === 'completed' ? 'OK' : '2'}</span>
+            <span className={`phase-node-label ${round2Classes.icon} text-lg font-bold`}>{hasProjectSubmission || round2Status === 'completed' ? 'OK' : '2'}</span>
           </div>
           <div className={`phase-card relative flex-1 overflow-hidden rounded-xl border bg-white p-6 shadow-sm ${round2Classes.card}`}>
             <div className="mb-2 flex items-start justify-between gap-4">

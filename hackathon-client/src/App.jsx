@@ -12,6 +12,7 @@ import JudgeDashboard from './components/JudgeDashboard';
 import LiveLeaderboard from './components/LiveLeaderboard';
 import AdminDashboard from './components/AdminDashboard';
 import HackathonRules from './components/HackathonRules';
+import ThemeToggle from './components/ThemeToggle';
 import { apiClient, buildWebSocketUrl } from './api/client';
 import {
   clearAuthSession,
@@ -20,6 +21,7 @@ import {
   loadStoredParticipantProgress,
   saveStoredParticipantProgress
 } from './api/session';
+import useThemePreference from './hooks/useThemePreference';
 
 const DEFAULT_STAGES = {
   registration: 'active',
@@ -40,8 +42,6 @@ const DEFAULT_ASSESSMENT_STATUS = {
   user_score: null,
   team: null
 };
-
-const AUTH_THEME_STORAGE_KEY = 'hackcore-auth-theme';
 
 const LoadingScreen = ({ label = 'Loading...' }) => (
   <div className="flex min-h-[50vh] items-center justify-center text-sm font-bold text-gray-500">
@@ -84,32 +84,12 @@ const MainLayout = ({ children, onSignOut }) => {
   const role = getSessionRole();
   const navigate = useNavigate();
   const location = useLocation();
-  const [theme, setTheme] = useState(() => {
-    try {
-      return localStorage.getItem(AUTH_THEME_STORAGE_KEY) || 'light';
-    } catch {
-      return 'light';
-    }
-  });
-  const isDarkTheme = theme === 'dark';
+  const { isDarkTheme, toggleTheme } = useThemePreference('light');
   const navButtonClass = (path) => (
     location.pathname === path
       ? 'text-sm font-bold text-blue-700 bg-blue-50 px-3 py-1.5 rounded transition'
       : 'text-sm font-bold text-gray-600 px-3 py-1.5 rounded transition hover:bg-gray-100 hover:text-gray-900'
   );
-  const toggleTheme = () => {
-    setTheme((currentTheme) => {
-      const nextTheme = currentTheme === 'dark' ? 'light' : 'dark';
-
-      try {
-        localStorage.setItem(AUTH_THEME_STORAGE_KEY, nextTheme);
-      } catch {
-        // Ignore storage failures; the in-memory theme still updates.
-      }
-
-      return nextTheme;
-    });
-  };
 
   return (
     <div className={`app-auth-shell min-h-screen bg-gray-50 ${isDarkTheme ? 'theme-dark' : 'theme-light'}`}>
@@ -129,26 +109,13 @@ const MainLayout = ({ children, onSignOut }) => {
             </div>
           )}
         </div>
-        <div className="flex items-center gap-4">
-          <p className="text-sm text-gray-500 font-medium hidden sm:block">
-            Role: <span className="uppercase text-blue-600">{role}</span>
-          </p>
-          <button
-            type="button"
-            onClick={toggleTheme}
-            className="flex items-center gap-2 rounded-full border border-gray-200 bg-gray-50 px-3 py-1.5 text-xs font-bold text-gray-600 transition hover:bg-gray-100"
-            aria-pressed={isDarkTheme}
-          >
-            <span className={`h-2.5 w-2.5 rounded-full ${isDarkTheme ? 'bg-emerald-400' : 'bg-amber-400'}`} />
-            {isDarkTheme ? 'Dark' : 'Light'}
-          </button>
-          <button
-            onClick={() => navigate('/leaderboard')}
-            className="text-sm font-bold text-indigo-600 bg-indigo-50 px-3 py-1.5 rounded hover:bg-indigo-100 transition"
-          >
-            Projector View
-          </button>
-          <button onClick={onSignOut} className="text-sm font-medium text-gray-500 hover:text-red-600 transition">
+        <div className="flex items-center gap-3">
+          <ThemeToggle
+            isDarkTheme={isDarkTheme}
+            onToggle={toggleTheme}
+            className="border-gray-200 bg-white text-gray-600 hover:border-gray-300 hover:bg-gray-50 hover:text-gray-900"
+          />
+          <button onClick={onSignOut} className="rounded-md border border-transparent px-3 py-2 text-sm font-semibold text-gray-500 transition hover:border-red-100 hover:bg-red-50 hover:text-red-600">
             Sign Out
           </button>
         </div>
